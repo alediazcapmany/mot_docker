@@ -18,7 +18,7 @@ RUN wget -O opencv.zip https://github.com/opencv/opencv/archive/4.11.0.zip \
     && cmake ../opencv-4.11.0 \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
-        -DBUILD_LIST=core,dnn,highgui,imgproc,videoio \
+        -DBUILD_LIST=core,dnn,highgui,imgproc,videoio,objdetect \
         -DWITH_GTK=ON \
         -DBUILD_TESTS=OFF \
         -DBUILD_PERF_TESTS=OFF \
