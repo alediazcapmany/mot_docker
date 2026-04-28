@@ -11,27 +11,27 @@ Antes de empezar, necesitas tener instalado en tu máquina (Linux/Ubuntu):
 ## 🚀 Instalación y Primeros Pasos
 
 **1. Clona el repositorio:**
-\`\`\`bash
+```bash
 git clone <URL_DE_TU_REPOSITORIO>
 cd mot_docker
-\`\`\`
+```
 
 **2. Descarga el modelo de YOLOv8:**
 Como el modelo de Inteligencia Artificial pesa bastante, no está incluido en el código. Descárgalo directamente en la carpeta del proyecto:
-\`\`\`bash
-wget -O yolov8n.onnx https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.onnx
-\`\`\`
+```bash
+wget -O yolov8n.onnx [https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.onnx](https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.onnx)
+```
 
 **3. Construye el "Búnker" (La imagen de Docker):**
 Ejecuta este comando para construir el entorno. Va a descargar Ubuntu, compilar OpenCV 4.11.0 desde cero e instalar Rust. Tómate un café, que esto puede tardar unos 10-15 minutos la primera vez (luego se queda cacheado).
-\`\`\`bash
+```bash
 docker build -t yolo_rust_docker .
-\`\`\`
+```
 
 **4. Da permisos a los scripts de utilidad:**
-\`\`\`bash
+```bash
 chmod +x run_tracker.sh open_terminal.sh
-\`\`\`
+```
 
 ---
 
@@ -41,15 +41,15 @@ He preparado tres formas diferentes de interactuar con el código, dependiendo d
 
 ### Opción A: Solo quiero ver el tracking funcionando
 Si no quieres tocar código y solo quieres ver el resultado sobre el vídeo (`test.mp4`), lanza el script automático. El contenedor nacerá, abrirá la ventana con las cajas de detección, y se destruirá limpiamente al terminar.
-\`\`\`bash
+```bash
 ./run_tracker.sh
-\`\`\`
+```
 
 ### Opción B: Quiero lanzar comandos manuales
 Si quieres hacer pruebas rápidas en consola o compilar a mano sin abrir VS Code, usa este script para entrar al contenedor con una terminal interactiva:
-\`\`\`bash
+```bash
 ./open_terminal.sh
-\`\`\`
+```
 *(Una vez dentro, puedes ejecutar `cargo run --example yolo_bt` o cualquier otro comando de Linux).*
 
 ### Opción C: Quiero programar (Modo Profesional)
