@@ -1,0 +1,24 @@
+{
+    "name": "Rust OpenCV 4.11 Dev Environment",
+    "build": {
+        "dockerfile": "../Dockerfile"
+    },
+    "runArgs": [
+        "--net=host",
+        "-e", "DISPLAY=${localEnv:DISPLAY}",
+        "-v", "/tmp/.X11-unix:/tmp/.X11-unix",
+        "-v", "/home/catec/.Xauthority:/root/.Xauthority:rw"
+    ],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "rust-lang.rust-analyzer",
+                "tamasfe.even-better-toml",
+                "serayuzgur.crates",
+                "mutyh.rust-pack"
+            ]
+        }
+    },
+    "remoteUser": "root",
+    "workspaceFolder": "/app"
+}

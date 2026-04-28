@@ -1,0 +1,9 @@
+# Ignorar binarios compilados de Rust
+target/
+
+# Ignorar el modelo de IA (pesa mucho, mejor que se lo descarguen)
+*.onnx
+*.pt
+
+# Ignorar vídeos pesados (opcional, si quieres puedes dejar tu test.mp4 de ejemplo)
+*.mp4

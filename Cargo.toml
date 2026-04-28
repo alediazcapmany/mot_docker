@@ -1,0 +1,8 @@
+[package]
+name = "mot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+trackforge = "0.1.9"
+opencv = "0.96"
