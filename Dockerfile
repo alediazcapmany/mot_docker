@@ -36,6 +36,15 @@ ENV OPENCV_INCLUDE_PATHS="/usr/local/include/opencv4"
 ENV LIBCLANG_PATH="/usr/lib/llvm-18/lib/"
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig"
 
-# 5. Directorio de trabajo base
-# Dejamos la carpeta vacía. VS Code montará tu código real aquí automáticamente.
+# 4.Instalar el paquete de locales
+RUN apt-get update && apt-get install -y locales
+
+# Generar el locale deseado (ejemplo: Inglés US)
+RUN locale-gen en_US.UTF-8
+
+# Configurar las variables de entorno
+ENV LANG en_US.UTF-8
+ENV LANGUAGE en_US:en
+ENV LC_ALL en_US.UTF-8
+
 WORKDIR /app

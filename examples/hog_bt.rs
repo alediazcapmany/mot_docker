@@ -1,4 +1,5 @@
-// Ejemplo de MOT básico usando HOG para detección (con OpenCV)y ByteTrack para tracking (con TrackForge).
+// Ejemplo de MOT básico usando HOG para detección (con OpenCV) y ByteTrack para tracking (con TrackForge).
+
 // Dependencias
 use opencv::{
     Result,
@@ -10,8 +11,25 @@ use opencv::{
 
 use trackforge::trackers::byte_track::ByteTrack; // Importar el tracker ByteTrack desde el paquete trackforge.
 
+// ── Constantes de configuración ──────────────────────────────────────────────
+// Centralizar aquí todos los parámetros facilita ajustes sin tocar la lógica.
+
+/// Factor de escala al reducir el frame antes de la detección HOG.
+/// 0.25 = 25% del tamaño original → detección ~16× más rápida con pérdida mínima de precisión.
+const SCALE: f64 = 0.25;
+
+/// Ejecutar detección HOG solo cada N frames para ahorrar CPU.
+const DETECT_EVERY_N_FRAMES: usize = 2;
+
+/// Confianza mínima del SVM para aceptar una detección como válida (filtro de falsos positivos).
+const WEIGHT_THRESHOLD: f32 = 0.5;
+
 fn main() -> Result<()> {
-    // 1. Abrir el video desde un archivo.
+    // Factor inverso derivado de SCALE: convierte coordenadas del frame reducido
+    // al frame original (y viceversa dividiendo). Calculado una sola vez.
+    let inv_scale = (1.0 / SCALE) as f32; // = 4.0 con SCALE = 0.25
+
+    // 1. Abrir el video desde un archivo
     // "test.mp4" debe existir en la misma carpeta donde se ejecuta el programa.
     let mut cam = videoio::VideoCapture::from_file("test.mp4", videoio::CAP_ANY)?;
     if !cam.is_opened()? {
@@ -26,54 +44,60 @@ fn main() -> Result<()> {
     hog.set_svm_detector(objdetect::HOGDescriptor::get_default_people_detector()?); // Devuelve un vector de pesos preentrenados para detectar personas usando HOG+SVM
 
     // 3. Configurar el tracker ByteTrack para seguimiento de objetos
+    //   track_thresh: umbral de confianza mínimo para aceptar una detección
+    //   max_age:      frames sin detección antes de eliminar un track
+    //   match_thresh: umbral de IoU para emparejar detecciones con tracks existentes
+    //   det_thresh:   confianza mínima para considerar una detección en el proceso de matching
     let mut tracker = ByteTrack::new(0.6, 30, 0.8, 0.5);
-    // track_thresh: umbral de confianza para detecciones, max_age: frames sin detección antes de eliminar track, n_init: frames para confirmar track, min_confidence: confianza mínima para matching
-
-    // Constante que define cada cuántos frames se ejecuta la detección HOG
-    const DETECT_EVERY_N_FRAMES: usize = 2;
 
     // 4. Configurar la ventana de visualización
     let window = "MOT Basico - Fase 1";
     highgui::named_window(window, highgui::WINDOW_AUTOSIZE)?;
 
     // Variables para el bucle principal
-    let mut frame = Mat::default(); // Matriz OpenCV que contendrá cada frame leído del video
-    let mut frame_num: usize = 0; // Contador de frames procesados
-    let mut last_tracks = Vec::new(); // Vector para almacenar los tracks del último frame donde se ejecutó detección, se reutiliza en frames intermedios
+    let mut frame = Mat::default();      // Matriz OpenCV que contendrá cada frame leído del video
+    let mut frame_num: usize = 0;        // Contador de frames procesados
+    let mut last_tracks = Vec::new();    // Tracks del último frame con detección; se reutilizan
+                                         // en frames intermedios para evitar parpadeo de cajas
 
-    println!("Iniciando procesamiento... Presiona 'q' en la ventana para salir.");
+    println!("Iniciando procesamiento... Presiona 'q' o ESC en la ventana para salir.");
 
     // BUCLE PRINCIPAL DE PROCESAMIENTO
     // lectura de frame -> detección opcional -> tracking -> dibujo y visualización
     loop {
         // 1. Leer el siguiente frame del video en la matriz 'frame'
         cam.read(&mut frame)?;
-
         if frame.empty() {
-            // Imprimir mensaje informativo y salir del bucle.
             println!("Fin del video.");
             break;
         }
 
-        // 2. Redimensionar el frame a la mitad para acelerar la detección HOG
+        // Incrementar al inicio para que los breaks no alteren la paridad del contador.
+        frame_num += 1;
+
+        // 2. Redimensionar el frame según SCALE para acelerar la detección HOG.
         let mut frame_small = Mat::default();
         imgproc::resize(
             &frame,              // Frame original de alta resolución
             &mut frame_small,    // Destino del frame reducido
             Size::new(0, 0),     // Tamaño deseado (0,0 = calcular de los factores)
-            0.25,                // Escala horizontal
-            0.25,                // Escala vertical
+            SCALE,               // Escala horizontal
+            SCALE,               // Escala vertical
             imgproc::INTER_AREA, // Método de interpolación óptimo para reducción
         )?;
 
-        //  Detección de personas con HOG cada N frames
+        // Detección de personas con HOG cada N frames.
+        // En frames intermedios se reutilizan last_tracks para que las cajas no parpadeen.
+        // El tracker solo se actualiza cuando hay detecciones reales: así el max_age
+        // cuenta ciclos de detección, no frames, que es el comportamiento correcto.
         if frame_num % DETECT_EVERY_N_FRAMES == 0 {
             let mut found_locations = Vector::<Rect>::new(); // Rectángulos detectados por HOG
-            let mut found_weights = Vector::<f64>::new(); // Pesos de confianza asociados a cada detección (score del SVM)
+            let mut found_weights   = Vector::<f64>::new();  // Pesos de confianza asociados a cada detección (score del SVM)
 
-            // 3. Ejecutar detección multi-escala con pesos usando el descriptor HOG configurado
-            // detect_multi_scale_weights es una función que detecta objetos en la imagen a múltiples escalas
-            // y devuelve tanto las ubicaciones (bounding boxes) como los pesos (scores de confianza) para cada detección
+            // 3. Ejecutar detección multi-escala con pesos usando el descriptor HOG configurado.
+            // detect_multi_scale_weights detecta objetos en la imagen a múltiples escalas
+            // y devuelve tanto las ubicaciones (bounding boxes) como los pesos (scores de confianza)
+            // para cada detección.
             hog.detect_multi_scale_weights(
                 &frame_small,         // Imagen de entrada (resolución reducida)
                 &mut found_locations, // Salida: bounding boxes detectados
@@ -86,27 +110,28 @@ fn main() -> Result<()> {
                 false,                // use_meanshift_grouping: sin meanshift
             )?;
 
-            // 4. Preparar las detecciones para el tracker ByteTrack de TrackForge
+            // 4. Preparar las detecciones para el tracker ByteTrack de TrackForge.
             // Cada detección es una tupla (bounding_box, confianza, clase) donde:
-            // - bounding_box: array [x, y, width, height] en coordenadas absolutas
-            // - confianza: f32 entre 0.0 y 1.0 (score del detector)
-            // - clase: entero identificando tipo de objeto (0 = persona en MOT estándar)
+            // - bounding_box: array [x, y, width, height] en coordenadas del frame original
+            // - confianza:    f32 entre 0.0 y 1.0 (score del detector)
+            // - clase:        entero identificando tipo de objeto (0 = persona en MOT estándar)
             let mut detections = Vec::new();
 
             // 5. Iterar sobre todas las detecciones encontradas por HOG.
             for i in 0..found_locations.len() {
                 // Obtener el rectángulo y el peso de la detección actual.
-                let rect = found_locations.get(i)?; // Rectángulo detectado: (x, y, width, height)
-                let weight = found_weights.get(i)?; // Score de confianza del SVM para esta detección
+                let rect   = found_locations.get(i)?; // Rectángulo detectado: (x, y, width, height) en frame_small
+                let weight = found_weights.get(i)?;   // Score de confianza del SVM para esta detección
 
-                // Filtrar detecciones con baja confianza para reducir ruido y falsos positivos
-                if weight > 0.5 {
-                    // Duplicar resolución para mostrar al 50%
+                // Filtrar detecciones con baja confianza para reducir ruido y falsos positivos.
+                if weight as f32 > WEIGHT_THRESHOLD {
+                    // Escalar las coordenadas al frame original multiplicando por inv_scale,
+                    // de modo que el tracker opera siempre en el espacio de coordenadas real.
                     let bbox = [
-                        rect.x as f32 * 2.0,      
-                        rect.y as f32 * 2.0,      
-                        rect.width as f32 * 2.0,  
-                        rect.height as f32 * 2.0,
+                        rect.x      as f32 * inv_scale,
+                        rect.y      as f32 * inv_scale,
+                        rect.width  as f32 * inv_scale,
+                        rect.height as f32 * inv_scale,
                     ];
 
                     // Agregar la detección al vector en formato ByteTrack de TrackForge: (bbox, confianza, clase)
@@ -114,20 +139,23 @@ fn main() -> Result<()> {
                 }
             }
 
-            // Actualizar el tracker con las detecciones del frame actual, devuelve una lista de "tracks" con IDs y posiciones actualizadas
+            // Actualizar el tracker con las detecciones del frame actual.
+            // Devuelve una lista de tracks con IDs y posiciones actualizadas.
             last_tracks = tracker.update(detections);
         }
 
-        // Si no toca detectar, usamos last_tracks
+        // Si no toca detectar, se reutiliza last_tracks sin modificar.
 
-        // 6. Dibujar resultados
+        // 6. Dibujar resultados.
+        // Los tracks almacenan coordenadas del frame original → dividir por inv_scale
+        // para obtener la posición correcta sobre frame_small.
         for track in &last_tracks {
-            let bbox = track.tlwh;  // Contiene la posición del track en formato (x, y, width, height) en coordenadas absolutas
-            let rect = Rect::new(   // Convertir las coordenadas del track a formato Rect para dibujar en OpenCV
-                (bbox[0] / 2.0) as i32,
-                (bbox[1] / 2.0) as i32,
-                (bbox[2] / 2.0) as i32,
-                (bbox[3] / 2.0) as i32,
+            let bbox = track.tlwh; // Posición del track en formato (x, y, width, height) en coordenadas del frame original
+            let rect = Rect::new(  // Convertir las coordenadas del track a formato Rect para dibujar en OpenCV
+                (bbox[0] / inv_scale) as i32,
+                (bbox[1] / inv_scale) as i32,
+                (bbox[2] / inv_scale) as i32,
+                (bbox[3] / inv_scale) as i32,
             );
 
             // Dibujar la caja verde alrededor de la persona
@@ -142,7 +170,10 @@ fn main() -> Result<()> {
 
             // Dibujar el ID del track sobre la caja
             let label = format!("ID: {}", track.track_id);
-            let pos = Point::new((bbox[0] / 2.0) as i32, (bbox[1] / 2.0 - 10.0) as i32);
+            let pos = Point::new(
+                (bbox[0] / inv_scale) as i32,
+                (bbox[1] / inv_scale - 10.0) as i32,
+            );
             imgproc::put_text(
                 &mut frame_small,
                 &label,
@@ -156,16 +187,14 @@ fn main() -> Result<()> {
             )?;
         }
 
-        // 7. Mostrar frame
-        // ya al 50%
+        // 7. Mostrar frame procesado
         highgui::imshow(window, &frame_small)?;
 
-        // Esperar 1 ms y comprobar si se presiona la tecla 'q' -> Velocidad de reproducción del video
-        if highgui::wait_key(1)? == 113 {
+        // Salir si se presiona 'q' o ESC
+        let key = highgui::wait_key(1)?;
+        if key == 'q' as i32 || key == 27 {
             break;
         }
-
-        frame_num += 1;
     }
 
     // Si el bucle termina correctamente, devolver Ok para indicar éxito.
