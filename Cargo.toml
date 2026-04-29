@@ -5,4 +5,8 @@ edition = "2021"
 
 [dependencies]
 trackforge = "0.1.9"
-opencv = "0.96"
+opencv = "0.94.4"
+yolo_detector = "1.0.1"
+
+[patch.crates-io]
+ort = { git = "https://github.com/pykeio/ort", tag = "v1.16.3" }

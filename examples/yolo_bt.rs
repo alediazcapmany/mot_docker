@@ -9,25 +9,25 @@ use opencv::{
 use trackforge::trackers::byte_track::ByteTrack;
 
 // ── Constantes de configuración ──────────────────────────────────────────────
-// Centralizar aquí todos los parámetros facilita ajustes sin tocar la lógica.
+// Centralizar aquí todos los parámetros facilita ajustes sin tocar la lógica
 
-/// Factor de escala al reducir el frame antes de la inferencia.
-/// 0.25 = 25% del tamaño original → 4× más rápido con pérdida mínima de precisión.
+/// Factor de escala al reducir el frame antes de la inferencia
+/// 0.25 = 25% del tamaño original → 4× más rápido con pérdida mínima de precisión
 const SCALE: f64 = 0.25;
 
-/// Tamaño de entrada requerido por el modelo YOLO (cuadrado).
+/// Tamaño de entrada requerido por el modelo YOLO (cuadrado)
 const INPUT_SIZE: i32 = 640;
 
-/// Ejecutar detección solo cada N frames para ahorrar CPU.
+/// Ejecutar detección solo cada N frames para ahorrar CPU
 const DETECT_EVERY_N_FRAMES: usize = 2;
 
-/// Confianza mínima para aceptar una detección como válida.
+/// Confianza mínima para aceptar una detección como válida
 const CONF_THRESHOLD: f32 = 0.5;
 
-/// Umbral de IoU para Non-Maximum Suppression: suprime cajas que se solapen más de este valor.
+/// Umbral de IoU para Non-Maximum Suppression: suprime cajas que se solapen más de este valor
 const NMS_THRESHOLD: f32 = 0.4;
 
-/// Índice de clase COCO que corresponde a "persona".
+/// Índice de clase COCO que corresponde a "persona"
 /// Índices de clase COCO habituales:
 ///   0 = persona,  1 = bicicleta, 2 = coche,       3 = motocicleta,
 ///   5 = autobús,  7 = camión,   16 = perro,       17 = caballo
@@ -273,13 +273,13 @@ fn main() -> Result<()> {
                 &mut frame_small,
                 rect_draw,
                 Scalar::new(0.0, 255.0, 0.0, 0.0),
-                2,
+                1,
                 imgproc::LINE_8,
                 0,
             )?;
 
             // Dibujar el ID del track sobre la caja
-            let label = format!("Persona ID: {}", track.track_id);
+            let label = format!("ID: {}", track.track_id);
             let pos = Point::new(
                 (bbox[0] / inv_scale) as i32,
                 (bbox[1] / inv_scale - 10.0) as i32,

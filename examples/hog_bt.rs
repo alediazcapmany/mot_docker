@@ -163,7 +163,7 @@ fn main() -> Result<()> {
                 &mut frame_small,
                 rect,
                 Scalar::new(0.0, 255.0, 0.0, 0.0),
-                2,
+                1,
                 imgproc::LINE_8,
                 0,
             )?;
@@ -180,8 +180,8 @@ fn main() -> Result<()> {
                 pos,
                 imgproc::FONT_HERSHEY_SIMPLEX,
                 0.6,
-                Scalar::new(0.0, 0.0, 255.0, 0.0), // rojo
-                2,
+                Scalar::new(0.0, 255.0, 0.0, 0.0), // rojo
+                1,
                 imgproc::LINE_8,
                 false,
             )?;
