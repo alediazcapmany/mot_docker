@@ -233,6 +233,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 
 [[package]]
+name = "configparser"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e57e3272f0190c3f1584272d613719ba5fc7df7f4942fe542e63d949cf3a649b"
+
+[[package]]
 name = "crc32fast"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -829,6 +835,8 @@ dependencies = [
 name = "mot"
 version = "0.1.0"
 dependencies = [
+ "nalgebra",
+ "norfair-rs",
  "opencv",
  "trackforge",
  "yolo_detector",
@@ -931,6 +939,18 @@ name = "noop_proc_macro"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
+
+[[package]]
+name = "norfair-rs"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba2f8480ee9cb75fcbc98e01a62c8841453ba5d2d3465ad64e07188d625cd778"
+dependencies = [
+ "configparser",
+ "nalgebra",
+ "smallvec",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "num-bigint"

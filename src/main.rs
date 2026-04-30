@@ -1,3 +1,7 @@
+// Ejemplo básico de Multiple Object Tracking (MOT) usando HOG para detección
+// de personas (con OpenCV) y ByteTrack para seguimiento de objetos (con TrackForge).
+// Este es el código principal del proyecto, equivalente a hog_bt.rs pero sin ejemplos adicionales.
+
 // Dependencias
 use opencv::{
     Result,
@@ -8,6 +12,23 @@ use opencv::{
 };
 
 use trackforge::trackers::byte_track::ByteTrack; // Importar el tracker ByteTrack desde el paquete trackforge.
+
+// ── Constantes de configuración ──────────────────────────────────────────────
+// Centralizar aquí todos los parámetros facilita ajustes sin tocar la lógica.
+
+/// Factor de escala al reducir el frame antes de la detección HOG.
+/// 0.5 = 50% del tamaño original → detección ~4× más rápida con pérdida mínima de precisión.
+const SCALE: f64 = 0.5;
+
+/// Ejecutar detección HOG solo cada N frames para ahorrar CPU.
+const DETECT_EVERY_N_FRAMES: usize = 2;
+
+/// Confianza mínima del SVM para aceptar una detección como válida (filtro de falsos positivos).
+const WEIGHT_THRESHOLD: f32 = 0.5;
+
+/// Factor inverso derivado de SCALE: convierte coordenadas del frame reducido
+/// al frame original (y viceversa dividiendo). Calculado una sola vez.
+const INV_SCALE: f32 = 2.0; // = 1.0 / SCALE con SCALE = 0.5
 
 fn main() -> Result<()> {
     // 1. Abrir el video desde un archivo.
@@ -27,9 +48,6 @@ fn main() -> Result<()> {
     // 3. Configurar el tracker ByteTrack para seguimiento de objetos
     let mut tracker = ByteTrack::new(0.6, 30, 0.8, 0.5);
     // track_thresh: umbral de confianza para detecciones, max_age: frames sin detección antes de eliminar track, n_init: frames para confirmar track, min_confidence: confianza mínima para matching
-
-    // Constante que define cada cuántos frames se ejecuta la detección HOG
-    const DETECT_EVERY_N_FRAMES: usize = 2;
 
     // 4. Configurar la ventana de visualización
     let window = "MOT Basico - Fase 1";
@@ -54,16 +72,19 @@ fn main() -> Result<()> {
             break;
         }
 
-        // 2. Redimensionar el frame a la mitad para acelerar la detección HOG
+        // 2. Redimensionar el frame según SCALE para acelerar la detección HOG
         let mut frame_small = Mat::default();
         imgproc::resize(
             &frame,              // Frame original de alta resolución
             &mut frame_small,    // Destino del frame reducido
             Size::new(0, 0),     // Tamaño deseado (0,0 = calcular de los factores)
-            0.25,                // Escala horizontal
-            0.25,                // Escala vertical
+            SCALE,               // Escala horizontal
+            SCALE,               // Escala vertical
             imgproc::INTER_AREA, // Método de interpolación óptimo para reducción
         )?;
+
+        // Incrementar al inicio para que los breaks no alteren la paridad del contador.
+        frame_num += 1;
 
         //  Detección de personas con HOG cada N frames
         if frame_num % DETECT_EVERY_N_FRAMES == 0 {
@@ -102,10 +123,10 @@ fn main() -> Result<()> {
                 if weight > 0.5 {
                     // Duplicar resolución para mostrar al 50%
                     let bbox = [
-                        rect.x as f32 * 2.0,      
-                        rect.y as f32 * 2.0,      
-                        rect.width as f32 * 2.0,  
-                        rect.height as f32 * 2.0,
+                        rect.x as f32 * INV_SCALE,      
+                        rect.y as f32 * INV_SCALE,      
+                        rect.width as f32 * INV_SCALE,  
+                        rect.height as f32 * INV_SCALE,
                     ];
 
                     // Agregar la detección al vector en formato ByteTrack de TrackForge: (bbox, confianza, clase)
@@ -123,10 +144,10 @@ fn main() -> Result<()> {
         for track in &last_tracks {
             let bbox = track.tlwh;  // Contiene la posición del track en formato (x, y, width, height) en coordenadas absolutas
             let rect = Rect::new(   // Convertir las coordenadas del track a formato Rect para dibujar en OpenCV
-                (bbox[0] / 2.0) as i32,
-                (bbox[1] / 2.0) as i32,
-                (bbox[2] / 2.0) as i32,
-                (bbox[3] / 2.0) as i32,
+                (bbox[0] / INV_SCALE) as i32,
+                (bbox[1] / INV_SCALE) as i32,
+                (bbox[2] / INV_SCALE) as i32,
+                (bbox[3] / INV_SCALE) as i32,
             );
 
             // Dibujar la caja verde alrededor de la persona
@@ -141,7 +162,7 @@ fn main() -> Result<()> {
 
             // Dibujar el ID del track sobre la caja
             let label = format!("ID: {}", track.track_id);
-            let pos = Point::new((bbox[0] / 2.0) as i32, (bbox[1] / 2.0 - 10.0) as i32);
+            let pos = Point::new((bbox[0] / INV_SCALE) as i32, (bbox[1] / INV_SCALE - 10.0) as i32);
             imgproc::put_text(
                 &mut frame_small,
                 &label,
@@ -163,10 +184,7 @@ fn main() -> Result<()> {
         if highgui::wait_key(1)? == 113 {
             break;
         }
-
-        frame_num += 1;
     }
 
-    // Si el bucle termina correctamente, devolver Ok para indicar éxito.
     Ok(())
 }

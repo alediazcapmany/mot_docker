@@ -73,7 +73,7 @@ fn main() -> Result<()> {
         // Leer el siguiente frame del video.
         cam.read(&mut frame)?;
         if frame.empty() {
-            println!("Fin del video.");
+            println!("Fin del video, han habido {} frames.", frame_num);
             break;
         }
 
