@@ -42,7 +42,7 @@ const PERSON_CLASS_ID: i32 = 0;
 // ── Función de distancia normalizada por tamaño de caja ──────────────────────
 // Divide la distancia euclidiana por la diagonal de la detección,
 // así objetos pequeños y grandes tienen el mismo umbral relativo.
-// El distance_threshold del Tracker debe ser ~0.5 (en vez de píxeles crudos).
+// El distance_threshold del Tracker debe ser ~0.5 (en vez de píxeles crudos)
 fn bbox_distance(det: &Detection, track: &TrackedObject) -> f64 {
     // Extraer coordenadas de la detección actual
     let dx1 = det.points[(0, 0)] - track.estimate[(0, 0)];
@@ -253,27 +253,6 @@ fn main() -> Result<()> {
 
     // 3. Configurar el tracker Norfair con función de distancia personalizada
     // Umbral 0.5 (adimensional) en lugar de 100 píxeles crudos
-    // let mut tracker = Tracker::new(TrackerConfig {
-    //     distance_function: DistanceFunction::Frobenius(ScalarDistance::new(bbox_distance)),
-    //     distance_threshold: 0.3,
-    //     hit_counter_max: 15,
-    //     initialization_delay: 3,
-    //     pointwise_hit_counter_max: 4,
-    //     detection_threshold: 0.5,
-    //     filter_factory: FilterFactoryEnum::default(),
-    //     past_detections_length: 4,
-    //     reid_distance_function: None,   // Se podría reidentificar con una funcion propia
-    //     reid_distance_threshold: 100.0,
-    //     reid_hit_counter_max: Some(50),
-    //     filter_factory: Box::new(OptimizedKalmanFilterFactory::new(
-    //             4.0,   // R (measurement noise)
-    //             0.1,   // Q (process noise)
-    //             10.0,  // P (initial covariance)
-    //             0.0,   // pos_variance
-    //             1.0,   // vel_variance
-    //         ))
-    // })
-    // .map_err(|e| opencv::Error::new(0, format!("Tracker creation failed: {:?}", e)))?;
     let mut tracker = Tracker::new(TrackerConfig {
         distance_function: DistanceFunction::Frobenius(ScalarDistance::new(bbox_distance)),
         distance_threshold: 0.3,
@@ -326,18 +305,19 @@ fn main() -> Result<()> {
             imgproc::INTER_AREA,
         )?;
 
-        // ── CLAVE: el tracker se llama SIEMPRE, cada frame ───────────────────
-        // En frames sin detección se pasa vec vacío: Norfair avanza el filtro
-        // de Kalman internamente y predice la posición, evitando cajas congeladas.
         let detections = if frame_num % DETECT_EVERY_N_FRAMES == 0 {
             run_yolo(&frame_small, &mut net)?
         } else {
             vec![] // Sin detección → Norfair predice con Kalman
         };
 
+        // ── CLAVE: el tracker se llama SIEMPRE, cada frame ───────────────────
+        // En frames sin detección se pasa vec vacío: Norfair avanza el filtro
+        // de Kalman internamente y predice la posición, evitando cajas congeladas
+
         let last_tracks = tracker.update(detections, frame_num as i32, None);
 
-        // ── Dibujar solo tracks confirmados (superaron initialization_delay) ─
+        // Dibujar solo tracks confirmados (superaron initialization_delay)
         for track in &last_tracks {
             if track.is_initializing {
                 continue;

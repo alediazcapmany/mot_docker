@@ -4,11 +4,10 @@
 
 // Dependencias
 use opencv::{
-    Result,
     core::{Point, Rect, Scalar, Size, Vector},
     highgui, imgproc, objdetect,
     prelude::*,
-    videoio,
+    videoio, Result,
 };
 
 use trackforge::trackers::byte_track::ByteTrack; // Importar el tracker ByteTrack desde el paquete trackforge.
@@ -24,7 +23,7 @@ const SCALE: f64 = 0.5;
 const DETECT_EVERY_N_FRAMES: usize = 2;
 
 /// Confianza mínima del SVM para aceptar una detección como válida (filtro de falsos positivos).
-const WEIGHT_THRESHOLD: f32 = 0.5;
+// const WEIGHT_THRESHOLD: f32 = 0.5;
 
 /// Factor inverso derivado de SCALE: convierte coordenadas del frame reducido
 /// al frame original (y viceversa dividiendo). Calculado una sola vez.
@@ -123,9 +122,9 @@ fn main() -> Result<()> {
                 if weight > 0.5 {
                     // Duplicar resolución para mostrar al 50%
                     let bbox = [
-                        rect.x as f32 * INV_SCALE,      
-                        rect.y as f32 * INV_SCALE,      
-                        rect.width as f32 * INV_SCALE,  
+                        rect.x as f32 * INV_SCALE,
+                        rect.y as f32 * INV_SCALE,
+                        rect.width as f32 * INV_SCALE,
                         rect.height as f32 * INV_SCALE,
                     ];
 
@@ -142,8 +141,9 @@ fn main() -> Result<()> {
 
         // 6. Dibujar resultados
         for track in &last_tracks {
-            let bbox = track.tlwh;  // Contiene la posición del track en formato (x, y, width, height) en coordenadas absolutas
-            let rect = Rect::new(   // Convertir las coordenadas del track a formato Rect para dibujar en OpenCV
+            let bbox = track.tlwh; // Contiene la posición del track en formato (x, y, width, height) en coordenadas absolutas
+            let rect = Rect::new(
+                // Convertir las coordenadas del track a formato Rect para dibujar en OpenCV
                 (bbox[0] / INV_SCALE) as i32,
                 (bbox[1] / INV_SCALE) as i32,
                 (bbox[2] / INV_SCALE) as i32,
@@ -162,7 +162,10 @@ fn main() -> Result<()> {
 
             // Dibujar el ID del track sobre la caja
             let label = format!("ID: {}", track.track_id);
-            let pos = Point::new((bbox[0] / INV_SCALE) as i32, (bbox[1] / INV_SCALE - 10.0) as i32);
+            let pos = Point::new(
+                (bbox[0] / INV_SCALE) as i32,
+                (bbox[1] / INV_SCALE - 10.0) as i32,
+            );
             imgproc::put_text(
                 &mut frame_small,
                 &label,
