@@ -1,170 +1,259 @@
-// Ejemplo básico de Multiple Object Tracking (MOT) usando HOG para detección
-// de personas (con OpenCV) y ByteTrack para seguimiento de objetos (con TrackForge).
-// Este es el código principal del proyecto, equivalente a hog_bt.rs pero sin ejemplos adicionales.
-
-// Dependencias
+// Este ejemplo carga un modelo YOLO ONNX, ejecuta inferencia con OpenCV DNN,
+// filtra detecciones de personas y envía los resultados a nuestro NUEVO TRACKER
 use opencv::{
-    core::{Point, Rect, Scalar, Size, Vector},
-    highgui, imgproc, objdetect,
+    core::{self, Mat, Point, Rect, Scalar, Size, Vector},
+    dnn, highgui, imgproc,
     prelude::*,
     videoio, Result,
 };
 
-use trackforge::trackers::byte_track::ByteTrack; // Importar el tracker ByteTrack desde el paquete trackforge.
+// 1. IMPORTAMOS NUESTRO TRACKER PROPIO
+// CÁMBIALO POR ESTO EN MAIN.RS:
+use mot::tracktrack::track::{Detection, TrackState};
+use mot::tracktrack::tracker::{Args, Tracker};
 
 // ── Constantes de configuración ──────────────────────────────────────────────
-// Centralizar aquí todos los parámetros facilita ajustes sin tocar la lógica.
-
-/// Factor de escala al reducir el frame antes de la detección HOG.
-/// 0.5 = 50% del tamaño original → detección ~4× más rápida con pérdida mínima de precisión.
-const SCALE: f64 = 0.5;
-
-/// Ejecutar detección HOG solo cada N frames para ahorrar CPU.
-const DETECT_EVERY_N_FRAMES: usize = 2;
-
-/// Confianza mínima del SVM para aceptar una detección como válida (filtro de falsos positivos).
-// const WEIGHT_THRESHOLD: f32 = 0.5;
-
-/// Factor inverso derivado de SCALE: convierte coordenadas del frame reducido
-/// al frame original (y viceversa dividiendo). Calculado una sola vez.
-const INV_SCALE: f32 = 2.0; // = 1.0 / SCALE con SCALE = 0.5
+const SCALE: f64 = 0.25;
+const INPUT_SIZE: i32 = 640;
+const DETECT_EVERY_N_FRAMES: usize = 1;
+const CONF_THRESHOLD: f32 = 0.3;
+const NMS_THRESHOLD: f32 = 0.4;
+const PERSON_CLASS_ID: i32 = 0;
 
 fn main() -> Result<()> {
-    // 1. Abrir el video desde un archivo.
-    // "test.mp4" debe existir en la misma carpeta donde se ejecuta el programa.
+    let inv_scale = (1.0 / SCALE) as f32;
+
     let mut cam = videoio::VideoCapture::from_file("test.mp4", videoio::CAP_ANY)?;
     if !cam.is_opened()? {
-        // Si no se puede abrir, se detiene la ejecución y se muestra un mensaje claro.
         panic!("No se pudo abrir el video. Revisa la ruta.");
     }
 
-    // 2. Configurar el descriptor HOG para detección de personas
-    let mut hog = objdetect::HOGDescriptor::default()?;
+    let mut net = dnn::read_net_from_onnx("yolov8n.onnx")?;
+    net.set_preferable_backend(dnn::DNN_BACKEND_OPENCV)?;
+    net.set_preferable_target(dnn::DNN_TARGET_CPU)?;
 
-    // Configurar el detector SVM (Support Vector Machine) integrado para detección de personas
-    hog.set_svm_detector(objdetect::HOGDescriptor::get_default_people_detector()?); // Devuelve un vector de pesos preentrenados para detectar personas usando HOG+SVM
+    // 2. CONFIGURAMOS NUESTRO TRACKER
+    let args = Args {
+        max_time_lost: 30, // frames máximos perdido
+        det_thr: 0.5,      // Límite para considerar det alta/baja
+        match_thr: 0.8,    // Límite de similitud para asociar
+        penalty_p: 0.1,    // Penalización por confianza baja
+        penalty_q: 0.2,    // Penalización por det eliminada
+        reduce_step: 0.1,  // Reducción del umbral iterativo
+        init_thr: 0.6,     // Umbral inicio NMS
+        tai_thr: 0.4,      // Track Aware NMS thresh
+    };
 
-    // 3. Configurar el tracker ByteTrack para seguimiento de objetos
-    let mut tracker = ByteTrack::new(0.6, 30, 0.8, 0.5);
-    // track_thresh: umbral de confianza para detecciones, max_age: frames sin detección antes de eliminar track, n_init: frames para confirmar track, min_confidence: confianza mínima para matching
+    // OJO: "test.mp4" buscará "./trackers/cmc/GMC-test.mp4.txt".
+    // Si no lo usas, crea el archivo vacío para que no explote.
+    let mut tracker = Tracker::new(args, "test.mp4");
+    let mut last_tracks = Vec::new();
 
-    // 4. Configurar la ventana de visualización
-    let window = "MOT Basico - Fase 1";
+    let window = "YOLO v8 + TrackTrack Pro";
     highgui::named_window(window, highgui::WINDOW_AUTOSIZE)?;
 
-    // Variables para el bucle principal
-    let mut frame = Mat::default(); // Matriz OpenCV que contendrá cada frame leído del video
-    let mut frame_num: usize = 0; // Contador de frames procesados
-    let mut last_tracks = Vec::new(); // Vector para almacenar los tracks del último frame donde se ejecutó detección, se reutiliza en frames intermedios
+    let mut frame = Mat::default();
+    let mut frame_num: usize = 0;
 
-    println!("Iniciando procesamiento... Presiona 'q' en la ventana para salir.");
+    println!("Iniciando... Presiona 'q' o 'esc' para salir");
 
-    // BUCLE PRINCIPAL DE PROCESAMIENTO
-    // lectura de frame -> detección opcional -> tracking -> dibujo y visualización
     loop {
-        // 1. Leer el siguiente frame del video en la matriz 'frame'
         cam.read(&mut frame)?;
-
         if frame.empty() {
-            // Imprimir mensaje informativo y salir del bucle.
-            println!("Fin del video.");
+            println!("Fin del video, han habido {} frames.", frame_num);
             break;
         }
 
-        // 2. Redimensionar el frame según SCALE para acelerar la detección HOG
-        let mut frame_small = Mat::default();
-        imgproc::resize(
-            &frame,              // Frame original de alta resolución
-            &mut frame_small,    // Destino del frame reducido
-            Size::new(0, 0),     // Tamaño deseado (0,0 = calcular de los factores)
-            SCALE,               // Escala horizontal
-            SCALE,               // Escala vertical
-            imgproc::INTER_AREA, // Método de interpolación óptimo para reducción
-        )?;
-
-        // Incrementar al inicio para que los breaks no alteren la paridad del contador.
         frame_num += 1;
 
-        //  Detección de personas con HOG cada N frames
-        if frame_num % DETECT_EVERY_N_FRAMES == 0 {
-            let mut found_locations = Vector::<Rect>::new(); // Rectángulos detectados por HOG
-            let mut found_weights = Vector::<f64>::new(); // Pesos de confianza asociados a cada detección (score del SVM)
+        let mut frame_small = Mat::default();
+        imgproc::resize(
+            &frame,
+            &mut frame_small,
+            Size::new(0, 0),
+            SCALE,
+            SCALE,
+            imgproc::INTER_AREA,
+        )?;
 
-            // 3. Ejecutar detección multi-escala con pesos usando el descriptor HOG configurado
-            // detect_multi_scale_weights es una función que detecta objetos en la imagen a múltiples escalas
-            // y devuelve tanto las ubicaciones (bounding boxes) como los pesos (scores de confianza) para cada detección
-            hog.detect_multi_scale_weights(
-                &frame_small,         // Imagen de entrada (resolución reducida)
-                &mut found_locations, // Salida: bounding boxes detectados
-                &mut found_weights,   // Salida: scores de confianza
-                0.0,                  // hit_threshold: umbral detector
-                Size::new(16, 16),    // win_stride: paso ventana
-                Size::new(0, 0),      // padding: acolchado adicional
-                1.05,                 // scale: factor escala pirámide
-                1.05,                 // final_threshold: umbral agrupamiento
-                false,                // use_meanshift_grouping: sin meanshift
+        // 3. SEPARACIÓN DE LÓGICA: FRAME DE DETECCIÓN vs FRAME DE PREDICCIÓN
+        if frame_num % DETECT_EVERY_N_FRAMES == 0 {
+            // --- BLOQUE YOLO ---
+            let blob = dnn::blob_from_image(
+                &frame_small,
+                1.0 / 255.0,
+                Size::new(INPUT_SIZE, INPUT_SIZE),
+                Scalar::default(),
+                true,
+                false,
+                core::CV_32F,
             )?;
 
-            // 4. Preparar las detecciones para el tracker ByteTrack de TrackForge
-            // Cada detección es una tupla (bounding_box, confianza, clase) donde:
-            // - bounding_box: array [x, y, width, height] en coordenadas absolutas
-            // - confianza: f32 entre 0.0 y 1.0 (score del detector)
-            // - clase: entero identificando tipo de objeto (0 = persona en MOT estándar)
-            let mut detections = Vec::new();
+            net.set_input(&blob, "", 1.0, Scalar::default())?;
 
-            // 5. Iterar sobre todas las detecciones encontradas por HOG.
-            for i in 0..found_locations.len() {
-                // Obtener el rectángulo y el peso de la detección actual.
-                let rect = found_locations.get(i)?; // Rectángulo detectado: (x, y, width, height)
-                let weight = found_weights.get(i)?; // Score de confianza del SVM para esta detección
+            let mut output_blobs: Vector<Mat> = Vector::new();
+            let out_names = net.get_unconnected_out_layers_names()?;
+            net.forward(&mut output_blobs, &out_names)?;
 
-                // Filtrar detecciones con baja confianza para reducir ruido y falsos positivos
-                if weight > 0.5 {
-                    // Duplicar resolución para mostrar al 50%
-                    let bbox = [
-                        rect.x as f32 * INV_SCALE,
-                        rect.y as f32 * INV_SCALE,
-                        rect.width as f32 * INV_SCALE,
-                        rect.height as f32 * INV_SCALE,
-                    ];
+            let output = output_blobs.get(0)?;
+            let size = output.mat_size();
 
-                    // Agregar la detección al vector en formato ByteTrack de TrackForge: (bbox, confianza, clase)
-                    detections.push((bbox, weight as f32, 0));
+            let is_yolov8 = size[1] < size[2];
+            let num_preds = if is_yolov8 {
+                size[2] as usize
+            } else {
+                size[1] as usize
+            };
+            let num_attrs = if is_yolov8 {
+                size[1] as usize
+            } else {
+                size[2] as usize
+            };
+            let num_classes = if is_yolov8 {
+                num_attrs - 4
+            } else {
+                num_attrs - 5
+            };
+
+            let mut class_ids = Vector::<i32>::new();
+            let mut confidences = Vector::<f32>::new();
+            let mut boxes = Vector::<Rect>::new();
+
+            let x_factor = frame_small.cols() as f32 / INPUT_SIZE as f32;
+            let y_factor = frame_small.rows() as f32 / INPUT_SIZE as f32;
+            let data = output.data_typed::<f32>()?;
+
+            for p in 0..num_preds {
+                let mut max_class_score = 0.0f32;
+                let mut class_id = 0i32;
+                let confidence: f32;
+                let cx: f32;
+                let cy: f32;
+                let w: f32;
+                let h: f32;
+
+                if is_yolov8 {
+                    cx = data[0 * num_preds + p];
+                    cy = data[1 * num_preds + p];
+                    w = data[2 * num_preds + p];
+                    h = data[3 * num_preds + p];
+
+                    for j in 0..num_classes {
+                        let score = data[(4 + j) * num_preds + p];
+                        if score > max_class_score {
+                            max_class_score = score;
+                            class_id = j as i32;
+                        }
+                    }
+                    confidence = max_class_score;
+                } else {
+                    let base_idx = p * num_attrs;
+                    cx = data[base_idx + 0];
+                    cy = data[base_idx + 1];
+                    w = data[base_idx + 2];
+                    h = data[base_idx + 3];
+                    let objectness = data[base_idx + 4];
+
+                    for j in 0..num_classes {
+                        let score = data[base_idx + 5 + j];
+                        if score > max_class_score {
+                            max_class_score = score;
+                            class_id = j as i32;
+                        }
+                    }
+                    confidence = objectness * max_class_score;
+                }
+
+                if confidence >= CONF_THRESHOLD && class_id == PERSON_CLASS_ID {
+                    let left = ((cx - w / 2.0) * x_factor) as i32;
+                    let top = ((cy - h / 2.0) * y_factor) as i32;
+                    let width = (w * x_factor) as i32;
+                    let height = (h * y_factor) as i32;
+
+                    class_ids.push(class_id);
+                    confidences.push(confidence);
+                    boxes.push(Rect::new(left, top, width, height));
                 }
             }
 
-            // Actualizar el tracker con las detecciones del frame actual, devuelve una lista de "tracks" con IDs y posiciones actualizadas
-            last_tracks = tracker.update(detections);
+            let mut indices = Vector::<i32>::new();
+            dnn::nms_boxes(
+                &boxes,
+                &confidences,
+                CONF_THRESHOLD,
+                NMS_THRESHOLD,
+                &mut indices,
+                1.0,
+                0,
+            )?;
+
+            // 4. CONVERTIMOS A NUESTRO STRUCT 'Detection' EN FORMATO x1, y1, x2, y2
+            let mut detections = Vec::new();
+            for idx in indices {
+                let i = idx as usize;
+                let rect = boxes.get(i)?;
+                let conf = confidences.get(i)?;
+
+                // Escalamos y convertimos a [x1, y1, x2, y2]
+                let x1 = rect.x as f32 * inv_scale;
+                let y1 = rect.y as f32 * inv_scale;
+                let x2 = (rect.x + rect.width) as f32 * inv_scale;
+                let y2 = (rect.y + rect.height) as f32 * inv_scale;
+
+                detections.push(Detection {
+                    bbox: [x1, y1, x2, y2],
+                    score: conf,
+                    feat: Vec::new(), // Sin ReID de momento
+                });
+            }
+
+            // Actualizamos nuestro tracker (pasamos lista vacía a dets_95 de momento)
+            // last_tracks = tracker.update(detections, Vec::new());
+            tracker.update(detections, Vec::new());
+            last_tracks = tracker
+                .tracks
+                .iter()
+                .filter(|t| t.state == TrackState::Confirmed || t.state == TrackState::New)
+                .cloned()
+                .collect();
+        } else {
+            // FRAME SIN YOLO: Dejamos que el Filtro de Kalman siga la inercia
+            tracker.update_without_detections();
+
+            // Extraemos los tracks activos para dibujarlos (ya actualizados por el Kalman)
+            last_tracks = tracker
+                .tracks
+                .iter()
+                .filter(|t| t.state == TrackState::Confirmed || t.state == TrackState::New) // <--- AÑADE ESTO AQUÍ TAMBIÉN                .cloned()
+                .cloned()
+                .collect();
         }
 
-        // Si no toca detectar, usamos last_tracks
-
-        // 6. Dibujar resultados
+        // 5. DIBUJAR RESULTADOS
         for track in &last_tracks {
-            let bbox = track.tlwh; // Contiene la posición del track en formato (x, y, width, height) en coordenadas absolutas
-            let rect = Rect::new(
-                // Convertir las coordenadas del track a formato Rect para dibujar en OpenCV
-                (bbox[0] / INV_SCALE) as i32,
-                (bbox[1] / INV_SCALE) as i32,
-                (bbox[2] / INV_SCALE) as i32,
-                (bbox[3] / INV_SCALE) as i32,
+            // Usamos tu método x1y1wh() para convertir el [x1,y1,x2,y2] de vuelta a un formato compatible con OpenCV Rect
+            let bbox = track.x1y1wh();
+
+            let rect_draw = Rect::new(
+                (bbox[0] / inv_scale) as i32,
+                (bbox[1] / inv_scale) as i32,
+                (bbox[2] / inv_scale) as i32,
+                (bbox[3] / inv_scale) as i32,
             );
 
-            // Dibujar la caja verde alrededor de la persona
             imgproc::rectangle(
                 &mut frame_small,
-                rect,
+                rect_draw,
                 Scalar::new(0.0, 255.0, 0.0, 0.0),
-                2,
+                2, // Línea un poco más gruesa
                 imgproc::LINE_8,
                 0,
             )?;
 
-            // Dibujar el ID del track sobre la caja
             let label = format!("ID: {}", track.track_id);
             let pos = Point::new(
-                (bbox[0] / INV_SCALE) as i32,
-                (bbox[1] / INV_SCALE - 10.0) as i32,
+                (bbox[0] / inv_scale) as i32,
+                (bbox[1] / inv_scale - 10.0) as i32,
             );
             imgproc::put_text(
                 &mut frame_small,
@@ -172,19 +261,17 @@ fn main() -> Result<()> {
                 pos,
                 imgproc::FONT_HERSHEY_SIMPLEX,
                 0.6,
-                Scalar::new(0.0, 0.0, 255.0, 0.0), // rojo
+                Scalar::new(0.0, 255.0, 0.0, 0.0),
                 2,
                 imgproc::LINE_8,
                 false,
             )?;
         }
 
-        // 7. Mostrar frame
-        // ya al 50%
         highgui::imshow(window, &frame_small)?;
 
-        // Esperar 1 ms y comprobar si se presiona la tecla 'q' -> Velocidad de reproducción del video
-        if highgui::wait_key(1)? == 113 {
+        let key = highgui::wait_key(1)?;
+        if key == 'q' as i32 || key == 27 {
             break;
         }
     }
