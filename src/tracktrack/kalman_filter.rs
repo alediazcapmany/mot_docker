@@ -1,17 +1,18 @@
-use nalgebra::{SMatrix, SVector, Cholesky};
+use nalgebra::{Cholesky, SMatrix, SVector};
 
-// ── DEFINICIONES DE TIPOS ───────────────────────────────────────────────────
+// ---DEFINICIONES DE TIPOS -----------------------------------------------------------
 pub type StateVec = SVector<f32, 8>;
 pub type MeasureVec = SVector<f32, 4>;
 pub type StateMat = SMatrix<f32, 8, 8>;
 pub type MeasureMat = SMatrix<f32, 4, 8>;
 
+// ---KALMAN FILTER ------------------------------------------------------------------
 #[derive(Clone)]
 pub struct KalmanFilter {
-    motion_mat: StateMat,
-    update_mat: MeasureMat,
-    std_pos: f32,
-    std_vel: f32,
+    motion_mat: StateMat,   // Matriz de movimiento (F)
+    update_mat: MeasureMat, // Matriz de actualización (H)
+    std_pos: f32,           // Desviación estándar para la posición
+    std_vel: f32,           // Desviación estándar para la velocidad
 }
 
 impl KalmanFilter {
@@ -33,8 +34,8 @@ impl KalmanFilter {
         Self {
             motion_mat,
             update_mat,
-            std_pos: 1.0 / 20.0,
-            std_vel: 1.0 / 160.0,
+            std_pos: 1.0 / 20.0, // el 20 es un factor de escala que se usaba en el código Python original
+            std_vel: 1.0 / 160.0, // el 160 es un factor de escala que se usaba en el código Python original
         }
     }
 
@@ -50,8 +51,10 @@ impl KalmanFilter {
         let mut covariance = StateMat::zeros();
         for i in 0..8 {
             if i < 4 {
+                // Para las posiciones, incertidumbre más baja
                 covariance[(i, i)] = 2.0;
             } else {
+                // Para las velocidades, incertidumbre más alta
                 covariance[(i, i)] = 10.0;
             }
         }
@@ -70,7 +73,7 @@ impl KalmanFilter {
         covariance[(5, 5)] *= h;
         covariance[(7, 7)] *= h;
 
-        // Elevamos al cuadrado todos los elementos (np.square en Python)
+        // Elevamos al cuadrado todos los elementos
         covariance.component_mul_assign(&covariance.clone());
 
         (mean, covariance)
@@ -110,16 +113,16 @@ impl KalmanFilter {
         (next_mean, next_covariance)
     }
 
-    /// Proyecta el estado al espacio de medición (usado internamente por update)
+    /// Proyecta el estado al espacio de medición
     pub fn project(
         &self,
-        mean: &StateVec,
-        covariance: &StateMat,
-        confidence: f32,
+        mean: &StateVec,       // Media del estado
+        covariance: &StateMat, // Covarianza del estado
+        confidence: f32,       // Confianza del detector (entre 0 y 1) 
     ) -> (MeasureVec, nalgebra::SMatrix<f32, 4, 4>) {
-        let projected_mean = self.update_mat * mean;
+        let projected_mean = self.update_mat * mean;    // Proyecta la media al espacio de medición
 
-        let mut innovation_cov = nalgebra::SMatrix::<f32, 4, 4>::zeros();
+        let mut innovation_cov = nalgebra::SMatrix::<f32, 4, 4>::zeros();   //
         for i in 0..4 {
             innovation_cov[(i, i)] = self.std_pos;
         }
@@ -137,7 +140,8 @@ impl KalmanFilter {
 
         // NSA: Noise Scale Adaptive (Ajusta la incertidumbre según la confianza del detector)
         innovation_cov *= 1.0 - confidence;
-
+        
+        // S = H P H^T + R
         let projected_cov =
             self.update_mat * covariance * self.update_mat.transpose() + innovation_cov;
 
@@ -152,11 +156,13 @@ impl KalmanFilter {
         measurement: &[f32; 4],
         confidence: f32,
     ) -> (StateVec, StateMat) {
+        // Proyectamos el estado al espacio de medición para obtener la media proyectada y la covarianza proyectada
         let (projected_mean, projected_cov) = self.project(mean, covariance, confidence);
 
+        // Convertimos la medición a un vector de nalgebra
         let z = MeasureVec::from_row_slice(measurement);
 
-        // En lugar de scipy.linalg.cho_solve, usamos nalgebra para invertir (es una matriz de 4x4, rapidísimo)
+        // usamos nalgebra para invertir (es una matriz de 4x4, rapidísimo)
         // K = P * H^T * S^-1
         let ph_t = covariance * self.update_mat.transpose(); // P * H^T  (8×4)
         let kalman_gain = match Cholesky::new(projected_cov) {
@@ -167,11 +173,14 @@ impl KalmanFilter {
             }
             None => ph_t * projected_cov.try_inverse().unwrap_or_default(),
         };
+
+        // y finalmente actualizamos la media y la covarianza
         let innovation = z - projected_mean;
 
         let new_mean = mean + kalman_gain * innovation;
         let new_covariance = covariance - kalman_gain * projected_cov * kalman_gain.transpose();
 
+        // Devolvemos el nuevo estado actualizado
         (new_mean, new_covariance)
     }
 }

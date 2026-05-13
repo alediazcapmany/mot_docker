@@ -3,7 +3,9 @@ use super::track::{Detection, Track, TrackCounter, TrackState};
 use super::utils;
 use ndarray::Array1;
 
-// Reflejamos exactamente los argumentos que usaba tu código de Python
+// --- DEFINICIONES DE TIPOS -----------------------------------------------------------
+
+// Estructura para los argumentos de configuración del tracker
 #[derive(Clone, Debug)]
 pub struct Args {
     pub max_time_lost: usize,
@@ -16,13 +18,14 @@ pub struct Args {
     pub tai_thr: f32, // Track Aware NMS threshold
 }
 
+// --- TRACKER -------------------------------------------------------------------------
 pub struct Tracker {
-    pub args: Args,
-    pub max_time_lost: usize,
-    pub tracks: Vec<Track>,
-    pub frame_id: usize,
-    pub counter: TrackCounter,
-    pub cmc: Cmc,
+    pub args: Args,            // Argumentos de configuración del tracker
+    pub max_time_lost: usize,  // Frames que track perdido sobrevive
+    pub tracks: Vec<Track>,    // Lista de tracks activos
+    pub frame_id: usize,       // ID del frame actual
+    pub counter: TrackCounter, // Contador de IDs
+    pub cmc: Cmc,              // Compensación de movimiento de cámara
 }
 
 impl Tracker {
@@ -39,8 +42,10 @@ impl Tracker {
         }
     }
 
+    // Inicia nuevos tracks a partir de detecciones huérfanas (que no se asignaron a ningún track)
     pub fn init_tracks(&mut self, dets: Vec<Detection>) {
         if dets.is_empty() {
+            // Si no hay detecciones, no hay huerfanas
             return;
         }
 
@@ -51,7 +56,7 @@ impl Tracker {
             .filter(|t| t.state == TrackState::Confirmed || t.state == TrackState::New)
             .collect();
 
-        // Extraer las cajas para calcular la similitud (equivalente a iou_distance en Python)
+        // Extraer las cajas para calcular la similitud
         let mut all_boxes: Vec<[f32; 4]> = alive_tracks.iter().map(|t| t.x1y1x2y2()).collect();
         let det_boxes: Vec<[f32; 4]> = dets.iter().map(|d| d.bbox).collect();
         all_boxes.extend(&det_boxes);
@@ -61,12 +66,13 @@ impl Tracker {
         let scores = Array1::from_iter(dets.iter().map(|d| d.score));
 
         // NMS Consciente de Tracks
+        // (Track Aware NMS): Solo iniciamos tracks de detecciones que no estén muy cerca de los tracks vivos
         let allow_indices = utils::track_aware_nms(
-            &iou_sim,
-            scores.as_slice().unwrap(),
-            alive_tracks.len(),
-            self.args.tai_thr,
-            self.args.init_thr,
+            &iou_sim,                   // Matriz de similitud IoU entre tracks vivos y detecciones
+            scores.as_slice().unwrap(), // Scores de las detecciones
+            alive_tracks.len(), // Número de tracks vivos (para separar la matriz de similitud)
+            self.args.tai_thr,  // Umbral de NMS consciente de tracks
+            self.args.init_thr, // Umbral de score para iniciar tracks
         );
 
         // Iniciamos los que sobreviven
@@ -74,7 +80,7 @@ impl Tracker {
             if flag {
                 let mut new_track = Track::new(dets[idx].bbox, dets[idx].score, 3, false);
                 new_track.feat = dets[idx].feat.clone();
-                new_track.initiate(self.frame_id, &mut self.counter); // Le damos ID oficial
+                new_track.initiate(self.frame_id, &mut self.counter);
                 self.tracks.push(new_track);
             }
         }
@@ -88,14 +94,14 @@ impl Tracker {
         let dets_boxes: Vec<[f32; 4]> = dets.iter().map(|d| d.bbox).collect();
         let dets_95_boxes: Vec<[f32; 4]> = dets_95.iter().map(|d| d.bbox).collect();
 
-        // Get deleted detections
+        // Recuperar detections eliminadas
         let dets_del_indices = utils::find_deleted_detections(&dets_boxes, &dets_95_boxes);
         let mut dets_del = Vec::new();
         for idx in dets_del_indices {
             dets_del.push(dets_95[idx].clone());
         }
 
-        // Divide detections
+        // Divide detections en alta y baja confianza según el umbral de detección
         let mut dets_high = Vec::new();
         let mut dets_low = Vec::new();
         for d in dets {
@@ -105,7 +111,8 @@ impl Tracker {
                 dets_low.push(d);
             }
         }
-        
+
+        // Divide detections eliminadas en alta confianza según el umbral de detección
         let mut dets_del_high = Vec::new();
         for d in dets_del {
             if d.score > self.args.det_thr {
@@ -113,31 +120,34 @@ impl Tracker {
             }
         }
 
-        // Split tracks (TRUCO RUST: Extraemos los tracks temporalmente sin clonarlos)
-        let mut tracked_lost = Vec::new();
-        let mut new_tracks = Vec::new();
+        // Separar tracks en "lost" y "new" para aplicar CMC solo a los primeros
+        let mut tracked_lost_conf = Vec::new();  // Confirmed o Lost
+        let mut new_tracks = Vec::new(); 
         // let mut other_tracks = Vec::new(); // Para los que ya estaban borrados
-        
-        let current_tracks = std::mem::take(&mut self.tracks); // self.tracks queda vacío temporalmente
+
+        // Recorremos los tracks actuales y los separamos según su estado
+        let current_tracks = std::mem::take(&mut self.tracks);
         for t in current_tracks {
             if t.state == TrackState::Confirmed || t.state == TrackState::Lost {
-                tracked_lost.push(t);
+                tracked_lost_conf.push(t);
             } else if t.state == TrackState::New {
                 new_tracks.push(t);
-            } else {
-                // let mut other_tracks = Vec::new(); // Para los que ya estaban borrados
-            }
+            } 
         }
 
-        // Camera motion compensation
+        // CMC a los tracks Confirmed y Lost, no a los New (porque no tienen Kalman)
         if let Some(warp_matrix) = self.cmc.get_warp_matrix() {
-            crate::tracktrack::cmc::apply_cmc(&mut tracked_lost, &warp_matrix);
+            crate::tracktrack::cmc::apply_cmc(&mut tracked_lost_conf, &warp_matrix);
             crate::tracktrack::cmc::apply_cmc(&mut new_tracks, &warp_matrix);
         }
 
-        // Predict the current location with KF
-        for t in tracked_lost.iter_mut() { t.predict(); }
-        for t in new_tracks.iter_mut() { t.predict(); }
+        // Predict de todos los tracks (los que van a ser asociados y los nuevos)
+        for t in tracked_lost_conf.iter_mut() {
+            t.predict();
+        }
+        for t in new_tracks.iter_mut() {
+            t.predict();
+        }
 
         // ==============================================================================================================
         // Association 1: (tracked and lost tracks) & (high confidence detections)
@@ -147,7 +157,7 @@ impl Tracker {
         all_dets.extend(dets_del_high.clone());
 
         let (matches, u_tracks, u_dets) = utils::iterative_assignment(
-            &tracked_lost,
+            &tracked_lost_conf,
             &dets_high,
             &dets_low,
             &dets_del_high,
@@ -164,13 +174,13 @@ impl Tracker {
             let t = m[0];
             let d = m[1];
             // Actualizamos caja, score y feature (si lo necesitas)
-            tracked_lost[t].update(self.frame_id, all_dets[d].bbox, all_dets[d].score);
-            tracked_lost[t].feat = all_dets[d].feat.clone(); // Reemplaza update_features de Python
+            tracked_lost_conf[t].update(self.frame_id, all_dets[d].bbox, all_dets[d].score);
+            tracked_lost_conf[t].feat = all_dets[d].feat.clone(); // Reemplaza update_features de Python
         }
 
         // Mark "lost" to unmatched tracks
         for t in u_tracks {
-            tracked_lost[t].mark_lost();
+            tracked_lost_conf[t].mark_lost();
         }
 
         // ==============================================================================================================
@@ -201,7 +211,11 @@ impl Tracker {
         for m in matches_new {
             let t = m[0];
             let d = m[1];
-            new_tracks[t].update(self.frame_id, dets_high_left[d].bbox, dets_high_left[d].score);
+            new_tracks[t].update(
+                self.frame_id,
+                dets_high_left[d].bbox,
+                dets_high_left[d].score,
+            );
             new_tracks[t].feat = dets_high_left[d].feat.clone();
         }
 
@@ -212,7 +226,7 @@ impl Tracker {
 
         // ==============================================================================================================
         // Juntamos todos los tracks de vuelta a la clase principal
-        self.tracks.extend(tracked_lost);
+        self.tracks.extend(tracked_lost_conf);
         self.tracks.extend(new_tracks);
         // self.tracks.extend(other_tracks);
 
@@ -257,7 +271,7 @@ impl Tracker {
         for t in self.tracks.iter_mut() {
             t.predict();
             t.mark_lost();
-            
+
             // Si llevan perdidos demasiado tiempo, se marcan para borrar
             if self.frame_id.saturating_sub(t.end_frame_id) > self.max_time_lost {
                 t.mark_deleted();

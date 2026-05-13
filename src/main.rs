@@ -11,6 +11,7 @@ use opencv::{
 // CÁMBIALO POR ESTO EN MAIN.RS:
 use mot::tracktrack::track::{Detection, TrackState};
 use mot::tracktrack::tracker::{Args, Tracker};
+use std::time::Instant;
 
 // ── Constantes de configuración ──────────────────────────────────────────────
 const SCALE: f64 = 0.25;
@@ -56,6 +57,9 @@ fn main() -> Result<()> {
     let mut frame_num: usize = 0;
 
     println!("Iniciando... Presiona 'q' o 'esc' para salir");
+
+    let mut total_tracker_time = 0.0;
+    let mut tracker_frames = 0;
 
     loop {
         cam.read(&mut frame)?;
@@ -209,14 +213,23 @@ fn main() -> Result<()> {
 
             // Actualizamos nuestro tracker (pasamos lista vacía a dets_95 de momento)
             // last_tracks = tracker.update(detections, Vec::new());
+            // --- EMPIEZA CRONÓMETRO RUST ---
+            let start_time = Instant::now();
             tracker.update(detections, Vec::new());
+            let elapsed = start_time.elapsed().as_secs_f64();
             last_tracks = tracker
                 .tracks
                 .iter()
                 .filter(|t| t.state == TrackState::Confirmed || t.state == TrackState::New)
                 .cloned()
                 .collect();
+            
+            total_tracker_time += elapsed;
+            tracker_frames += 1;
+            // --- TERMINA CRONÓMETRO RUST ---
         } else {
+            // --- EMPIEZA CRONÓMETRO RUST ---
+            let start_time = Instant::now();
             // FRAME SIN YOLO: Dejamos que el Filtro de Kalman siga la inercia
             tracker.update_without_detections();
 
@@ -227,6 +240,10 @@ fn main() -> Result<()> {
                 .filter(|t| t.state == TrackState::Confirmed || t.state == TrackState::New) // <--- AÑADE ESTO AQUÍ TAMBIÉN                .cloned()
                 .cloned()
                 .collect();
+            let elapsed = start_time.elapsed().as_secs_f64();
+            total_tracker_time += elapsed;
+            tracker_frames += 1;
+            // --- TERMINA CRONÓMETRO RUST ---
         }
 
         // 5. DIBUJAR RESULTADOS
@@ -275,6 +292,17 @@ fn main() -> Result<()> {
             break;
         }
     }
+
+    // IMPRIMIR EL RESULTADO FINAL FUERA DEL BUCLE
+    println!("=== RESULTADOS RUST ===");
+    println!(
+        "Tiempo total en el tracker: {:.4} segundos",
+        total_tracker_time
+    );
+    println!(
+        "Velocidad media: {:.2} FPS",
+        tracker_frames as f64 / total_tracker_time
+    );
 
     Ok(())
 }

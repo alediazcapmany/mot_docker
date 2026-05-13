@@ -2,7 +2,7 @@ use ndarray::Array2;
 use std::collections::HashMap;
 
 // IMPORTACIÓN CORREGIDA: Apuntamos a tus structs exactos
-use crate::tracktrack::track::{Track, Detection, HistoryEntry};
+use crate::tracktrack::track::{Detection, HistoryEntry, Track};
 
 /// Calcula la matriz de IoU entre dos listas de cajas: matriz de similitud entre tracks y detecciones devuelve
 /// Las cajas deben estar en formato [x1, y1, x2, y2]
@@ -65,10 +65,7 @@ pub fn find_deleted_detections(dets: &[[f32; 4]], dets_95: &[[f32; 4]]) -> Vec<u
     deleted_indices
 }
 
-pub fn iou_distance(
-    a_tracks: &[Track],
-    b_dets: &[Detection],
-) -> (Array2<f32>, Array2<f32>) {
+pub fn iou_distance(a_tracks: &[Track], b_dets: &[Detection]) -> (Array2<f32>, Array2<f32>) {
     // AQUI ESTA LA MAGIA: Llamamos al método .x1y1x2y2() que aplica el Kalman si existe
     let a_boxes: Vec<[f32; 4]> = a_tracks.iter().map(|t| t.x1y1x2y2()).collect();
     let b_boxes: Vec<[f32; 4]> = b_dets.iter().map(|d| d.bbox).collect();
@@ -111,10 +108,7 @@ pub fn iou_distance(
 // NUEVAS FUNCIONES FÍSICAS Y MATEMÁTICAS TRADUCIDAS DE PYTHON
 // -----------------------------------------------------------------------------------------
 
-pub fn cos_distance(
-    tracks: &[Track],
-    dets: &[Detection],
-) -> Array2<f32> {
+pub fn cos_distance(tracks: &[Track], dets: &[Detection]) -> Array2<f32> {
     let num_t = tracks.len();
     let num_d = dets.len();
     if num_t == 0 || num_d == 0 {
@@ -131,17 +125,14 @@ pub fn cos_distance(
                 .zip(dets[j].feat.iter())
                 .map(|(a, b)| a * b)
                 .sum();
-            
+
             cos_dist[[i, j]] = (1.0_f32 - dot).clamp(0.0_f32, 1.0_f32);
         }
     }
     cos_dist
 }
 
-pub fn conf_distance(
-    tracks: &[Track],
-    dets: &[Detection],
-) -> Array2<f32> {
+pub fn conf_distance(tracks: &[Track], dets: &[Detection]) -> Array2<f32> {
     let num_t = tracks.len();
     let num_d = dets.len();
     if num_t == 0 || num_d == 0 {
@@ -161,7 +152,7 @@ pub fn conf_distance(
         } else {
             let idx = 1.min(frame_ids.len() - 1);
             // Usamos .score porque HistoryEntry es un struct
-            t.history.get(frame_ids[idx]).unwrap().score 
+            t.history.get(frame_ids[idx]).unwrap().score
         };
 
         // Linear projection
@@ -335,10 +326,12 @@ pub fn iterative_assignment(
     // Calculate cost & Give penalties
     for i in 0..num_t {
         for j in 0..num_d {
-            let mut c = 0.50 * iou_dist[[i, j]]
-                + 0.50 * cos_dist[[i, j]]
-                + 0.10 * conf_dist[[i, j]]
-                + 0.05 * ang_dist[[i, j]];
+            // let mut c = 0.50 * iou_dist[[i, j]]
+            //     + 0.50 * cos_dist[[i, j]]
+            //     + 0.10 * conf_dist[[i, j]]
+            //     + 0.05 * ang_dist[[i, j]];
+            let mut c =
+                0.70 * iou_dist[[i, j]] + 0.20 * conf_dist[[i, j]] + 0.10 * ang_dist[[i, j]];
 
             // Give penalty según de qué lista proviene la detección
             if j >= dets_high.len() && j < dets_high.len() + dets_low.len() {
