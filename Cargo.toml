@@ -11,4 +11,4 @@ norfair-rs = "0.4.2"
 nalgebra = "0.34.2"
 
 [patch.crates-io]
-ort = { git = "https://github.com/pykeio/ort", tag = "v1.16.3" }
+ort = { git = "https://github.com/pykeio/ort", tag = "v1.16.3" }  

@@ -19,7 +19,7 @@ const SCALE: f64 = 0.25;
 const INPUT_SIZE: i32 = 640;
 
 /// Ejecutar detección solo cada N frames para ahorrar CPU
-const DETECT_EVERY_N_FRAMES: usize = 2;
+const DETECT_EVERY_N_FRAMES: usize = 5;
 
 /// Confianza mínima para aceptar una detección como válida
 const CONF_THRESHOLD: f32 = 0.5;
@@ -251,8 +251,8 @@ fn main() -> Result<()> {
                 }
 
                 // Actualizar el tracker con las detecciones del frame actual
-                tracker.update(detections) // Devuelve una lista de tracks con IDs y posiciones actualizadas 
-                // RESULTADO DE LA ACTUALIZACIÓN DEL TRACKER !
+                tracker.update(detections) // Devuelve una lista de tracks con IDs y posiciones actualizadas
+                                           // RESULTADO DE LA ACTUALIZACIÓN DEL TRACKER !
             };
         }
 
