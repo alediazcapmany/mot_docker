@@ -104,10 +104,6 @@ pub fn iou_distance(a_tracks: &[Track], b_dets: &[Detection]) -> (Array2<f32>, A
     }
 }
 
-// -----------------------------------------------------------------------------------------
-// NUEVAS FUNCIONES FÍSICAS Y MATEMÁTICAS TRADUCIDAS DE PYTHON
-// -----------------------------------------------------------------------------------------
-
 pub fn cos_distance(tracks: &[Track], dets: &[Detection]) -> Array2<f32> {
     let num_t = tracks.len();
     let num_d = dets.len();
@@ -330,8 +326,12 @@ pub fn iterative_assignment(
             //     + 0.50 * cos_dist[[i, j]]
             //     + 0.10 * conf_dist[[i, j]]
             //     + 0.05 * ang_dist[[i, j]];
-            let mut c =
-                0.70 * iou_dist[[i, j]] + 0.20 * conf_dist[[i, j]] + 0.10 * ang_dist[[i, j]];
+            let mut c = 0.50 * iou_dist[[i, j]]
+                + 0.50 * cos_dist[[i, j]]
+                + 0.10 * conf_dist[[i, j]]
+                + 0.05 * ang_dist[[i, j]];
+
+            let _cos_dist = cos_distance(tracks, &dets);    // La necesitamos para FastReID
 
             // Give penalty según de qué lista proviene la detección
             if j >= dets_high.len() && j < dets_high.len() + dets_low.len() {

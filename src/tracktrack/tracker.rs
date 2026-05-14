@@ -121,8 +121,8 @@ impl Tracker {
         }
 
         // Separar tracks en "lost" y "new" para aplicar CMC solo a los primeros
-        let mut tracked_lost_conf = Vec::new();  // Confirmed o Lost
-        let mut new_tracks = Vec::new(); 
+        let mut tracked_lost_conf = Vec::new(); // Confirmed o Lost
+        let mut new_tracks = Vec::new();
         // let mut other_tracks = Vec::new(); // Para los que ya estaban borrados
 
         // Recorremos los tracks actuales y los separamos según su estado
@@ -132,7 +132,7 @@ impl Tracker {
                 tracked_lost_conf.push(t);
             } else if t.state == TrackState::New {
                 new_tracks.push(t);
-            } 
+            }
         }
 
         // CMC a los tracks Confirmed y Lost, no a los New (porque no tienen Kalman)
@@ -174,8 +174,7 @@ impl Tracker {
             let t = m[0];
             let d = m[1];
             // Actualizamos caja, score y feature (si lo necesitas)
-            tracked_lost_conf[t].update(self.frame_id, all_dets[d].bbox, all_dets[d].score);
-            tracked_lost_conf[t].feat = all_dets[d].feat.clone(); // Reemplaza update_features de Python
+            tracked_lost_conf[t].update(self.frame_id, &all_dets[d]);
         }
 
         // Mark "lost" to unmatched tracks
@@ -211,11 +210,7 @@ impl Tracker {
         for m in matches_new {
             let t = m[0];
             let d = m[1];
-            new_tracks[t].update(
-                self.frame_id,
-                dets_high_left[d].bbox,
-                dets_high_left[d].score,
-            );
+            new_tracks[t].update(self.frame_id, &dets_high_left[d]);
             new_tracks[t].feat = dets_high_left[d].feat.clone();
         }
 
