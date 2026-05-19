@@ -3,12 +3,12 @@ use std::collections::HashMap; // Para almacenar el historial de cada track
 
 use super::kalman_filter::KalmanFilter; // Importa tu archivo de KalmanFilter
 
-pub type StateVec = SVector<f32, 8>; // [cx, cy, w, h, vx, vy, vw, vh]
-pub type StateMat = SMatrix<f32, 8, 8>; // Matriz de covarianza 8x8
+pub type StateVec = SVector<f64, 8>; // [cx, cy, w, h, vx, vy, vw, vh]
+pub type StateMat = SMatrix<f64, 8, 8>; // Matriz de covarianza 8x8
 
 // --- 1. UTILIDADES Y ESTADOS ------------------------------------------------------------------------
 /// Función para calcular la velocidad entre dos cajas (x1y1x2y2)
-fn get_vel(b_1: &[f32; 4], b_2: &[f32; 4]) -> [[f32; 2]; 4] {
+fn get_vel(b_1: &[f64; 4], b_2: &[f64; 4]) -> [[f64; 2]; 4] {
     // Diferencia de posición entre las dos cajas
     let deltas = [
         b_2[0] - b_1[0],
@@ -60,17 +60,17 @@ impl TrackCounter {
 /// Estructura con el historial de cada track
 #[derive(Debug, Clone)]
 pub struct HistoryEntry {
-    pub box_x1y1x2y2: [f32; 4], // Caja en formato x1y1x2y2
-    pub score: f32,             // Score de la detección
+    pub box_x1y1x2y2: [f64; 4], // Caja en formato x1y1x2y2
+    pub score: f64,             // Score de la detección
     pub mean: StateVec,         // Estado del filtro de Kalman (cx, cy, w, h, vx, vy, vw, vh)
     pub covariance: StateMat,   // Matriz de covarianza del filtro de Kalman
 }
 
 #[derive(Clone, Debug)]
 pub struct Detection {
-    pub bbox: [f32; 4],
-    pub score: f32,
-    pub feat: Vec<f32>, // Para la distancia coseno
+    pub bbox: [f64; 4],
+    pub score: f64,
+    pub feat: Vec<f64>, // Para la distancia coseno
 }
 
 // --- 2. INFO DEL TRACK ------------------------------------------------------------------------
@@ -82,9 +82,9 @@ pub struct Track {
     pub state: TrackState,   // Estado actual del track (New, Confirmed, Lost, Deleted)
 
     // Info
-    pub box_x1y1x2y2: [f32; 4], // Caja en formato x1y1x2y2
-    pub score: f32,             // Score de la detección
-    pub feat: Vec<f32>,         // Características para la distancia coseno (si las usas)
+    pub box_x1y1x2y2: [f64; 4], // Caja en formato x1y1x2y2
+    pub score: f64,             // Score de la detección
+    pub feat: Vec<f64>,         // Características para la distancia coseno (si las usas)
 
     // Info para calcular la velocidad
     pub delta_t: usize, // Número de frames para calcular la velocidad (ajustable)
@@ -97,7 +97,7 @@ pub struct Track {
     // Estado actual del filtro de Kalman
     pub mean: Option<StateVec>, // Estado actual del filtro de Kalman (cx, cy, w, h, vx, vy, vw, vh)
     pub covariance: Option<StateMat>, // Matriz de covarianza actual del filtro de Kalman
-    pub velocity: [[f32; 2]; 4], // Velocidad de cada esquina (lt, lb, rt, rb) calculada a partir del historial
+    pub velocity: [[f64; 2]; 4], // Velocidad de cada esquina (lt, lb, rt, rb) calculada a partir del historial
 
     // Parámetros para la lógica de tracking
     pub min_len: usize, // Número mínimo de detecciones para ser "Confirmed"
@@ -106,7 +106,7 @@ pub struct Track {
 
 impl Track {
     // Crea un nuevo track con los parámetros dados
-    pub fn new(box_x1y1x2y2: [f32; 4], score: f32, min_len: usize, is_dance_dataset: bool) -> Self {
+    pub fn new(box_x1y1x2y2: [f64; 4], score: f64, min_len: usize, is_dance_dataset: bool) -> Self {
         Self {
             track_id: 0,             // Se asigna en initiate()
             end_frame_id: 0,         // Se actualiza en initiate() y update()
@@ -189,7 +189,7 @@ impl Track {
         let cy = (det.bbox[1] + det.bbox[3]) / 2.0;
         let w = det.bbox[2] - det.bbox[0];
         let h = det.bbox[3] - det.bbox[1];
-        let det_cxcywh = [cx, cy, w, h];
+        let det_cxcywh: [f64; 4] = [cx, cy, w, h];
 
         // Actualiza el filtro de Kalman con la nueva detección
         if let (Some(kf), Some(mean), Some(cov)) =
@@ -224,26 +224,19 @@ impl Track {
 
         // Calcula la velocidad promedio de cada esquina usando el historial de detecciones
         for d_t in 1..=self.delta_t {
-            if frame_id >= d_t {
-                let target_frame = frame_id - d_t;
+            // Usamos el fallback real para pillar la mejor caja posible
+            let prev_box: [f64; 4] = super::utils::get_prev_box(&self.history, frame_id, d_t);
+            let vels = get_vel(&prev_box, &det.bbox);
 
-                // Busca la detección más cercana en el historial para el frame objetivo
-                if let Some(prev_entry) = self.history.get(&target_frame) {
-                    let prev_box = prev_entry.box_x1y1x2y2;
-                    let vels = get_vel(&prev_box, &det.bbox);
-
-                    for i in 0..4 {
-                        self.velocity[i][0] += vels[i][0] / d_t as f32;
-                        self.velocity[i][1] += vels[i][1] / d_t as f32;
-                    }
-                }
+            for i in 0..4 {
+                self.velocity[i][0] += vels[i][0] / d_t as f64;
+                self.velocity[i][1] += vels[i][1] / d_t as f64;
             }
         }
-
         // Promedia las velocidades si se han calculado para al menos un frame
         for i in 0..4 {
-            self.velocity[i][0] /= self.delta_t as f32;
-            self.velocity[i][1] /= self.delta_t as f32;
+            self.velocity[i][0] /= self.delta_t as f64;
+            self.velocity[i][1] /= self.delta_t as f64;
         }
 
         // Actualiza la caja, score, frame final y estado del track
@@ -264,17 +257,16 @@ impl Track {
         if self.feat.is_empty() {
             self.feat = det.feat.clone();
         } else if !det.feat.is_empty() {
-            // Mezclamos: 90% memoria antigua, 10% nueva vista (Alfa = 0.9 suele ser el estándar)
-            let alpha = 0.9_f32;
+            let alpha = 0.95_f64; // Igual al default de Python
+                                  // Factor dinámico basado en el score de la detección
+            let beta = alpha + (1.0 - alpha) * (1.0 - det.score);
             let mut sum_sq = 0.0;
 
             for i in 0..self.feat.len() {
-                self.feat[i] = alpha * self.feat[i] + (1.0 - alpha) * det.feat[i];
+                self.feat[i] = beta * self.feat[i] + (1.0 - beta) * det.feat[i];
                 sum_sq += self.feat[i] * self.feat[i];
             }
 
-            // Como hemos alterado los números, tenemos que volver a aplicar la Normalización L2
-            // para que la distancia Coseno siga funcionando en el próximo frame.
             let norm = sum_sq.sqrt().max(1e-12);
             for i in 0..self.feat.len() {
                 self.feat[i] /= norm;
@@ -284,7 +276,7 @@ impl Track {
 
     // --- 3. FORMATO DE CAJAS ------------------------------------------------------------------------
     // Caja en formato cxcywh
-    pub fn cxcywh(&self) -> [f32; 4] {
+    pub fn cxcywh(&self) -> [f64; 4] {
         if let Some(ref mean) = self.mean {
             [mean[0], mean[1], mean[2], mean[3]]
         } else {
@@ -296,7 +288,7 @@ impl Track {
         }
     }
     // Caja en formato x1y1wh
-    pub fn x1y1wh(&self) -> [f32; 4] {
+    pub fn x1y1wh(&self) -> [f64; 4] {
         if let Some(ref mean) = self.mean {
             let x1 = mean[0] - mean[2] / 2.0;
             let y1 = mean[1] - mean[3] / 2.0;
@@ -308,7 +300,7 @@ impl Track {
         }
     }
     // Caja en formato x1y1x2y2
-    pub fn x1y1x2y2(&self) -> [f32; 4] {
+    pub fn x1y1x2y2(&self) -> [f64; 4] {
         if let Some(ref mean) = self.mean {
             let x1 = mean[0] - mean[2] / 2.0;
             let y1 = mean[1] - mean[3] / 2.0;

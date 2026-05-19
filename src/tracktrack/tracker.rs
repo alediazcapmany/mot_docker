@@ -9,13 +9,14 @@ use ndarray::Array1;
 #[derive(Clone, Debug)]
 pub struct Args {
     pub max_time_lost: usize,
-    pub det_thr: f32,
-    pub match_thr: f32,
-    pub penalty_p: f32,
-    pub penalty_q: f32,
-    pub reduce_step: f32,
-    pub init_thr: f32,
-    pub tai_thr: f32, // Track Aware NMS threshold
+    pub det_thr: f64,
+    pub match_thr: f64,
+    pub penalty_p: f64,
+    pub penalty_q: f64,
+    pub reduce_step: f64,
+    pub init_thr: f64,
+    pub tai_thr: f64,   // Track Aware NMS threshold
+    pub min_len: usize, // ← añadir
 }
 
 // --- TRACKER -------------------------------------------------------------------------
@@ -57,8 +58,8 @@ impl Tracker {
             .collect();
 
         // Extraer las cajas para calcular la similitud
-        let mut all_boxes: Vec<[f32; 4]> = alive_tracks.iter().map(|t| t.x1y1x2y2()).collect();
-        let det_boxes: Vec<[f32; 4]> = dets.iter().map(|d| d.bbox).collect();
+        let mut all_boxes: Vec<[f64; 4]> = alive_tracks.iter().map(|t| t.x1y1x2y2()).collect();
+        let det_boxes: Vec<[f64; 4]> = dets.iter().map(|d| d.bbox).collect();
         all_boxes.extend(&det_boxes);
 
         // Matriz de similitud IoU
@@ -78,7 +79,8 @@ impl Tracker {
         // Iniciamos los que sobreviven
         for (idx, &flag) in allow_indices.iter().enumerate() {
             if flag {
-                let mut new_track = Track::new(dets[idx].bbox, dets[idx].score, 3, false);
+                let mut new_track =
+                    Track::new(dets[idx].bbox, dets[idx].score, self.args.min_len, false);
                 new_track.feat = dets[idx].feat.clone();
                 new_track.initiate(self.frame_id, &mut self.counter);
                 self.tracks.push(new_track);
@@ -91,8 +93,8 @@ impl Tracker {
         self.frame_id += 1;
 
         // Extraemos las cajas puras para la función matemática
-        let dets_boxes: Vec<[f32; 4]> = dets.iter().map(|d| d.bbox).collect();
-        let dets_95_boxes: Vec<[f32; 4]> = dets_95.iter().map(|d| d.bbox).collect();
+        let dets_boxes: Vec<[f64; 4]> = dets.iter().map(|d| d.bbox).collect();
+        let dets_95_boxes: Vec<[f64; 4]> = dets_95.iter().map(|d| d.bbox).collect();
 
         // Recuperar detections eliminadas
         let dets_del_indices = utils::find_deleted_detections(&dets_boxes, &dets_95_boxes);
@@ -255,7 +257,7 @@ impl Tracker {
         self.frame_id += 1;
 
         // Solo mantenemos Confirmed o Lost, tiramos los New
-        // self.tracks.retain(|t| t.state != TrackState::New);
+        self.tracks.retain(|t| t.state != TrackState::New);
 
         // Camera motion compensation
         if let Some(warp_matrix) = self.cmc.get_warp_matrix() {

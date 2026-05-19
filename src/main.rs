@@ -1,190 +1,184 @@
-use opencv::{
-    core::{self, Mat, Rect, Scalar, Size, Vector},
-    dnn, imgproc,
-    prelude::*,
-    videoio, Result,
-};
+// ============================================================================
+// Tracker de Rust — Evaluación con detecciones FRCNN (det.txt)
+// Equivalente 1:1 al eval_mot17.py de Python
+// ============================================================================
 
-use mot::fast_re_id::emb_computer::EmbeddingComputer;
-use mot::tracktrack::track::Detection;
+use mot::tracktrack::track::{Detection, TrackState};
 use mot::tracktrack::tracker::{Args, Tracker};
+
+use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::{BufRead, BufReader, Write};
 use std::time::Instant;
 
-const SCALE: f64 = 0.25;
-const INPUT_SIZE: i32 = 640;
-const DETECT_EVERY_N_FRAMES: usize = 5;
-const CONF_THRESHOLD: f32 = 0.3;
-const NMS_THRESHOLD: f32 = 0.4;
+// ============================================================================
+// LECTURA DE det.txt  (formato MOT: frame,-1,x,y,w,h,score,...)
+// ============================================================================
 
-fn main() -> Result<()> {
-    let inv_scale = (1.0 / SCALE) as f32;
+fn load_detections(det_path: &str) -> HashMap<usize, Vec<Detection>> {
+    let mut dets: HashMap<usize, Vec<Detection>> = HashMap::new();
 
-    let mut cam = videoio::VideoCapture::from_file("test.mp4", videoio::CAP_ANY)?;
-    if !cam.is_opened()? {
-        panic!("No se pudo abrir el video.");
+    let file = std::fs::File::open(det_path)
+        .unwrap_or_else(|_| panic!("No se pudo abrir: {}", det_path));
+
+    for line in BufReader::new(file).lines() {
+        let line = line.unwrap();
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let parts: Vec<&str> = line.split(',').collect();
+        if parts.len() < 7 {
+            continue;
+        }
+
+        let frame: usize = parts[0].trim().parse().unwrap();
+        let x: f64      = parts[2].trim().parse().unwrap();
+        let y: f64      = parts[3].trim().parse().unwrap();
+        let w: f64      = parts[4].trim().parse().unwrap();
+        let h: f64      = parts[5].trim().parse().unwrap();
+        let score: f64  = parts[6].trim().parse().unwrap_or(1.0);
+
+        // x1y1wh → x1y1x2y2
+        let bbox = [x, y, x + w, y + h];
+
+        dets.entry(frame).or_default().push(Detection {
+            bbox,
+            score,
+            feat: Vec::new(),
+        });
     }
 
-    let mut net = dnn::read_net_from_onnx("yolov8n.onnx")?;
-    net.set_preferable_backend(dnn::DNN_BACKEND_OPENCV)?;
-    net.set_preferable_target(dnn::DNN_TARGET_CPU)?;
+    dets
+}
 
-    let args = Args {
-        max_time_lost: 30,
-        det_thr: 0.5,
-        match_thr: 0.8,
-        penalty_p: 0.1,
-        penalty_q: 0.2,
-        reduce_step: 0.1,
-        init_thr: 0.6,
-        tai_thr: 0.4,
-    };
+// ============================================================================
+// LECTURA DE seqinfo.ini
+// ============================================================================
 
-    let mut tracker = Tracker::new(args, "test.mp4");
-    let _embedder = EmbeddingComputer::new("fastreid_rust.onnx")
-        .map_err(|e| opencv::Error::new(0, e.to_string()))?; // LO necesitaremos para FastReID
+fn read_seq_info(seq_path: &str) -> (usize, usize, usize) {
+    // Devuelve (seq_len, frame_rate, img_w, img_h) — usamos (seq_len, frame_rate)
+    let ini_path = format!("{}/seqinfo.ini", seq_path);
+    let file = std::fs::File::open(&ini_path)
+        .unwrap_or_else(|_| panic!("No se pudo abrir: {}", ini_path));
 
-    let mut frame = Mat::default();
-    let mut frame_num: usize = 0;
-    let mut total_tracker_time = 0.0f64;
-    let mut tracker_frames = 0usize;
+    let mut seq_len    = 0usize;
+    let mut frame_rate = 30usize;
 
-    println!("Iniciando benchmark...");
-
-    loop {
-        cam.read(&mut frame)?;
-        if frame.empty() {
-            println!("Fin del video: {} frames procesados.", frame_num);
-            break;
+    for line in BufReader::new(file).lines() {
+        let line = line.unwrap();
+        if line.starts_with("seqLength") {
+            seq_len = line.split('=').nth(1).unwrap().trim().parse().unwrap();
         }
-        frame_num += 1;
-        // println!("Frame {}", frame_num);
+        if line.starts_with("frameRate") {
+            frame_rate = line.split('=').nth(1).unwrap().trim().parse().unwrap();
+        }
+    }
 
-        let mut frame_small = Mat::default();
-        imgproc::resize(
-            &frame,
-            &mut frame_small,
-            Size::new(0, 0),
-            SCALE,
-            SCALE,
-            imgproc::INTER_AREA,
-        )?;
+    (seq_len, frame_rate, 0)
+}
 
-        if frame_num % DETECT_EVERY_N_FRAMES == 0 {
-            let blob = dnn::blob_from_image(
-                &frame_small,
-                1.0 / 255.0,
-                Size::new(INPUT_SIZE, INPUT_SIZE),
-                Scalar::default(),
-                true,
-                false,
-                core::CV_32F,
-            )?;
-            net.set_input(&blob, "", 1.0, Scalar::default())?;
-            let mut output_blobs: Vector<Mat> = Vector::new();
-            net.forward(&mut output_blobs, &net.get_unconnected_out_layers_names()?)?;
+// ============================================================================
+// MAIN
+// ============================================================================
 
-            let output = output_blobs.get(0)?;
-            let size = output.mat_size();
-            let is_yolov8 = size[1] < size[2];
-            let num_preds = if is_yolov8 {
-                size[2] as usize
+fn main() {
+    let base_dir   = "/app/datasets/MOT17/train";
+    let output_dir = "/app/TrackTrack/outputs/rust_results/data";
+
+    std::fs::create_dir_all(output_dir)
+        .expect("No se pudo crear el directorio de resultados");
+
+    let sequences = [
+        "MOT17-02-FRCNN",
+        "MOT17-04-FRCNN",
+        "MOT17-05-FRCNN",
+        "MOT17-09-FRCNN",
+        "MOT17-10-FRCNN",
+        "MOT17-11-FRCNN",
+        "MOT17-13-FRCNN",
+    ];
+
+    let mut total_tracker_time = 0.0f64;
+    let mut total_frames       = 0usize;
+
+    for seq_name in sequences.iter() {
+        println!("\n=======================================================");
+        println!("Procesando: {}", seq_name);
+
+        let seq_path  = format!("{}/{}", base_dir, seq_name);
+        let det_path  = format!("{}/det/det.txt", seq_path);
+        let out_path  = format!("{}/{}.txt", output_dir, seq_name);
+
+        // Leer detecciones y metadatos
+        let dets = load_detections(&det_path);
+        let (seq_len, frame_rate, _) = read_seq_info(&seq_path);
+
+        // Configurar tracker — igual que Python eval_mot17.py
+        let args = Args {
+            max_time_lost: frame_rate * 2, // igual que Python: frameRate * 2
+            det_thr:    0.5,
+            match_thr:  0.8,
+            penalty_p:  0.1,
+            penalty_q:  0.2,
+            reduce_step: 0.1,
+            init_thr:   0.6,
+            tai_thr:    0.4,
+            min_len:    3,
+        };
+        let mut tracker = Tracker::new(args, seq_name);
+
+        // Fichero de salida
+        let mut result_file = OpenOptions::new()
+            .create(true).write(true).truncate(true)
+            .open(&out_path)
+            .unwrap_or_else(|_| panic!("No se pudo crear: {}", out_path));
+
+        let mut seq_time = 0.0f64;
+
+        for frame_id in 1..=seq_len {
+            let frame_dets = dets.get(&frame_id).cloned().unwrap_or_default();
+
+            let start = Instant::now();
+            let tracks = if frame_dets.is_empty() {
+                tracker.update_without_detections()
             } else {
-                size[1] as usize
+                tracker.update(frame_dets, Vec::new())
             };
-            let num_attrs = if is_yolov8 {
-                size[1] as usize
-            } else {
-                size[2] as usize
-            };
-            let num_classes = if is_yolov8 {
-                num_attrs - 4
-            } else {
-                num_attrs - 5
-            };
-            let x_factor = frame_small.cols() as f32 / INPUT_SIZE as f32;
-            let y_factor = frame_small.rows() as f32 / INPUT_SIZE as f32;
-            let data = output.data_typed::<f32>()?;
+            seq_time += start.elapsed().as_secs_f64();
 
-            let mut confidences = Vector::<f32>::new();
-            let mut boxes = Vector::<Rect>::new();
+            // Escribir tracks confirmados — formato MOTChallenge
+            for track in &tracks {
+                if track.state == TrackState::Confirmed {
+                    let bbox = track.x1y1wh();
+                    let w = bbox[2].max(1.0);
+                    let h = bbox[3].max(1.0);
 
-            for p in 0..num_preds {
-                let (cx, cy, w, h, confidence) = if is_yolov8 {
-                    let cx = data[0 * num_preds + p];
-                    let cy = data[1 * num_preds + p];
-                    let w = data[2 * num_preds + p];
-                    let h = data[3 * num_preds + p];
-                    let conf = (4..4 + num_classes)
-                        .map(|j| data[j * num_preds + p])
-                        .fold(0f32, f32::max);
-                    (cx, cy, w, h, conf)
-                } else {
-                    let b = p * num_attrs;
-                    let conf = data[b + 4]
-                        * (5..5 + num_classes)
-                            .map(|j| data[b + j])
-                            .fold(0f32, f32::max);
-                    (data[b], data[b + 1], data[b + 2], data[b + 3], conf)
-                };
+                    // Filtro de área mínima (igual que Python: min_box_area=100)
+                    if w * h <= 100.0 {
+                        continue;
+                    }
 
-                if confidence >= CONF_THRESHOLD {
-                    boxes.push(Rect::new(
-                        ((cx - w / 2.0) * x_factor) as i32,
-                        ((cy - h / 2.0) * y_factor) as i32,
-                        (w * x_factor) as i32,
-                        (h * y_factor) as i32,
-                    ));
-                    confidences.push(confidence);
+                    let line = format!(
+                        "{},{},{:.2},{:.2},{:.2},{:.2},{:.2},-1,-1,-1\n",
+                        frame_id, track.track_id,
+                        bbox[0], bbox[1], w, h,
+                        track.score
+                    );
+                    result_file.write_all(line.as_bytes()).unwrap();
                 }
             }
-
-            let mut indices = Vector::<i32>::new();
-            dnn::nms_boxes(
-                &boxes,
-                &confidences,
-                CONF_THRESHOLD,
-                NMS_THRESHOLD,
-                &mut indices,
-                1.0,
-                0,
-            )?;
-
-            let mut detections = Vec::new();
-            for idx in indices {
-                let rect = boxes.get(idx as usize)?;
-                let conf = confidences.get(idx as usize)?;
-                let bbox = [
-                    rect.x as f32 * inv_scale,
-                    rect.y as f32 * inv_scale,
-                    (rect.x + rect.width) as f32 * inv_scale,
-                    (rect.y + rect.height) as f32 * inv_scale,
-                ];
-                // let feat = embedder.compute_embedding(&frame, &bbox)?;
-                detections.push(Detection {
-                    bbox,
-                    score: conf,
-                    feat: Vec::new(),
-                });
-            }
-
-            let start = Instant::now();
-            tracker.update(detections, Vec::new());
-            total_tracker_time += start.elapsed().as_secs_f64();
-            tracker_frames += 1;
-        } else {
-            let start = Instant::now();
-            tracker.update_without_detections();
-            total_tracker_time += start.elapsed().as_secs_f64();
-            tracker_frames += 1;
         }
+
+        let fps = seq_len as f64 / seq_time;
+        println!("  {}: {} frames → {:.1} FPS", seq_name, seq_len, fps);
+        total_tracker_time += seq_time;
+        total_frames += seq_len;
     }
 
-    println!("=== RESULTADOS RUST ===");
-    println!("Tiempo total en el tracker: {:.4} s", total_tracker_time);
-    println!(
-        "Velocidad media: {:.2} FPS",
-        tracker_frames as f64 / total_tracker_time
-    );
-
-    Ok(())
+    println!("\n=======================================================");
+    println!("=== RESUMEN GLOBAL RUST (FRCNN) ===");
+    println!("Tiempo neto tracker: {:.4} s", total_tracker_time);
+    println!("Velocidad media:     {:.2} FPS", total_frames as f64 / total_tracker_time);
 }

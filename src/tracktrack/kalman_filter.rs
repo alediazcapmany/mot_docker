@@ -1,18 +1,18 @@
 use nalgebra::{Cholesky, SMatrix, SVector};
 
 // ---DEFINICIONES DE TIPOS -----------------------------------------------------------
-pub type StateVec = SVector<f32, 8>;
-pub type MeasureVec = SVector<f32, 4>;
-pub type StateMat = SMatrix<f32, 8, 8>;
-pub type MeasureMat = SMatrix<f32, 4, 8>;
+pub type StateVec = SVector<f64, 8>;
+pub type MeasureVec = SVector<f64, 4>;
+pub type StateMat = SMatrix<f64, 8, 8>;
+pub type MeasureMat = SMatrix<f64, 4, 8>;
 
 // ---KALMAN FILTER ------------------------------------------------------------------
 #[derive(Clone)]
 pub struct KalmanFilter {
     motion_mat: StateMat,   // Matriz de movimiento (F)
     update_mat: MeasureMat, // Matriz de actualización (H)
-    std_pos: f32,           // Desviación estándar para la posición
-    std_vel: f32,           // Desviación estándar para la velocidad
+    std_pos: f64,           // Desviación estándar para la posición
+    std_vel: f64,           // Desviación estándar para la velocidad
 }
 
 impl KalmanFilter {
@@ -40,7 +40,7 @@ impl KalmanFilter {
     }
 
     /// Inicializa la media y la covarianza de un track nuevo
-    pub fn initiate(&self, measurement: &[f32; 4]) -> (StateVec, StateMat) {
+    pub fn initiate(&self, measurement: &[f64; 4]) -> (StateVec, StateMat) {
         let mut mean = StateVec::zeros();
         mean[0] = measurement[0]; // cx
         mean[1] = measurement[1]; // cy
@@ -118,11 +118,11 @@ impl KalmanFilter {
         &self,
         mean: &StateVec,       // Media del estado
         covariance: &StateMat, // Covarianza del estado
-        confidence: f32,       // Confianza del detector (entre 0 y 1) 
-    ) -> (MeasureVec, nalgebra::SMatrix<f32, 4, 4>) {
+        confidence: f64,       // Confianza del detector (entre 0 y 1) 
+    ) -> (MeasureVec, nalgebra::SMatrix<f64, 4, 4>) {
         let projected_mean = self.update_mat * mean;    // Proyecta la media al espacio de medición
 
-        let mut innovation_cov = nalgebra::SMatrix::<f32, 4, 4>::zeros();   //
+        let mut innovation_cov = nalgebra::SMatrix::<f64, 4, 4>::zeros();   //
         for i in 0..4 {
             innovation_cov[(i, i)] = self.std_pos;
         }
@@ -153,8 +153,8 @@ impl KalmanFilter {
         &self,
         mean: &StateVec,
         covariance: &StateMat,
-        measurement: &[f32; 4],
-        confidence: f32,
+        measurement: &[f64; 4],
+        confidence: f64,
     ) -> (StateVec, StateMat) {
         // Proyectamos el estado al espacio de medición para obtener la media proyectada y la covarianza proyectada
         let (projected_mean, projected_cov) = self.project(mean, covariance, confidence);

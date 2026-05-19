@@ -1,9 +1,26 @@
-# Ignorar binarios compilados de Rust
-target/
+# --- Rust / Cargo ---
+/target/
+Cargo.lock
 
-# Ignorar el modelo de IA (pesa mucho, mejor que se lo descarguen)
+# Nota: Descomenta Cargo.lock si es una librería, 
+# pero déjalo así si es una aplicación/ejecutable.
+
+# --- Modelos de Deep Learning (ONNX y PyTorch) ---
 *.onnx
+*.onnx.data
 *.pt
+*.pth
 
-# Ignorar vídeos pesados (opcional, si quieres puedes dejar tu test.mp4 de ejemplo)
+# --- Videos de prueba y resultados ---
 *.mp4
+/rust_results/
+/output.mp4
+
+# --- Datasets y archivos de texto de tracking ---
+/datasets/
+*MOT*.txt
+
+# --- Archivos del sistema y de desarrollo ---
+.DS_Store
+Thumbs.db
+.env

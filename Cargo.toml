@@ -12,3 +12,8 @@ ndarray = "0.15.6"
 # yolo_detector = "1.0.1" # Detector -> examples: yolors_bt.rs
 # norfair-rs = "0.4.2"    # Tracker -> examples: yolo_norfair.rs
 ort = { git = "https://github.com/pykeio/ort", tag = "v2.0.0-rc.9" }
+
+
+[[bin]]
+name = "eval_mot17"
+path = "src/bin/eval_mot17.rs"

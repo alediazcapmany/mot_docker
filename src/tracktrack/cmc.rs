@@ -22,7 +22,7 @@ impl Cmc {
                 .to_string();
         } else if vid_name.contains("dance") {
             if let Some(suffix) = vid_name.split("dancetrack").nth(1) {
-                parsed_name = format!("dancetrack{}", suffix);
+                parsed_name = format!("dancetrack-{}", suffix);
             }
         }
 
@@ -40,7 +40,7 @@ impl Cmc {
     }
 
     // Devuelve la matriz frame a frame
-    pub fn get_warp_matrix(&mut self) -> Option<[[f32; 3]; 2]> {
+    pub fn get_warp_matrix(&mut self) -> Option<[[f64; 3]; 2]> {
         // Si no se encontró el archivo al inicio, no hacemos nada y devolvemos None
         let reader = self.reader.as_mut()?;
 
@@ -73,7 +73,7 @@ impl Cmc {
 }
 
 /// Aplica la compensación de cámara a los Tracks modificando su estado de Kalman
-pub fn apply_cmc(tracks: &mut [Track], warp_matrix: &[[f32; 3]; 2]) {
+pub fn apply_cmc(tracks: &mut [Track], warp_matrix: &[[f64; 3]; 2]) {
     for track in tracks.iter_mut() {
         // Si el track no tiene Kalman inicializado aún, no hacemos nada
         if let (Some(mean), Some(cov)) = (&mut track.mean, &mut track.covariance) {

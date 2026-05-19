@@ -1,15 +1,14 @@
 use ndarray::Array2;
 use std::collections::HashMap;
 
-// IMPORTACIÓN CORREGIDA: Apuntamos a tus structs exactos
 use crate::tracktrack::track::{Detection, HistoryEntry, Track};
 
 /// Calcula la matriz de IoU entre dos listas de cajas: matriz de similitud entre tracks y detecciones devuelve
 /// Las cajas deben estar en formato [x1, y1, x2, y2]
-pub fn bbox_overlaps(a_boxes: &[[f32; 4]], b_boxes: &[[f32; 4]]) -> Array2<f32> {
+pub fn bbox_overlaps(a_boxes: &[[f64; 4]], b_boxes: &[[f64; 4]]) -> Array2<f64> {
     let num_a = a_boxes.len();
     let num_b = b_boxes.len();
-    let mut overlaps = Array2::<f32>::zeros((num_a, num_b));
+    let mut overlaps = Array2::<f64>::zeros((num_a, num_b));
 
     for n_b in 0..num_b {
         let b = b_boxes[n_b]; // [x1, y1, x2, y2] de la caja b
@@ -34,9 +33,9 @@ pub fn bbox_overlaps(a_boxes: &[[f32; 4]], b_boxes: &[[f32; 4]]) -> Array2<f32> 
 
 /// Encuentra detecciones de alta confianza que fueron eliminadas (ej. por NMS)
 /// Devuelve los índices de las cajas en `dets_95` que hay que rescatar.
-pub fn find_deleted_detections(dets: &[[f32; 4]], dets_95: &[[f32; 4]]) -> Vec<usize> {
+pub fn find_deleted_detections(dets: &[[f64; 4]], dets_95: &[[f64; 4]]) -> Vec<usize> {
     // Usamos nuestra propia función matemática de arriba
-    let ious: Array2<f32> = bbox_overlaps(dets, dets_95);
+    let ious: Array2<f64> = bbox_overlaps(dets, dets_95);
     let mut deleted_indices = Vec::new();
 
     let num_a = dets.len();
@@ -48,7 +47,7 @@ pub fn find_deleted_detections(dets: &[[f32; 4]], dets_95: &[[f32; 4]]) -> Vec<u
     }
 
     for j in 0..num_b {
-        let mut max_iou = 0.0_f32;
+        let mut max_iou = 0.0_f64;
 
         for i in 0..num_a {
             let current_iou = ious[[i, j]];
@@ -65,28 +64,27 @@ pub fn find_deleted_detections(dets: &[[f32; 4]], dets_95: &[[f32; 4]]) -> Vec<u
     deleted_indices
 }
 
-pub fn iou_distance(a_tracks: &[Track], b_dets: &[Detection]) -> (Array2<f32>, Array2<f32>) {
+pub fn iou_distance(a_tracks: &[Track], b_dets: &[Detection]) -> (Array2<f64>, Array2<f64>) {
     // AQUI ESTA LA MAGIA: Llamamos al método .x1y1x2y2() que aplica el Kalman si existe
-    let a_boxes: Vec<[f32; 4]> = a_tracks.iter().map(|t| t.x1y1x2y2()).collect();
-    let b_boxes: Vec<[f32; 4]> = b_dets.iter().map(|d| d.bbox).collect();
+    let a_boxes: Vec<[f64; 4]> = a_tracks.iter().map(|t| t.x1y1x2y2()).collect();
+    let b_boxes: Vec<[f64; 4]> = b_dets.iter().map(|d| d.bbox).collect();
 
     // Calcular distancia IoU
     if a_boxes.is_empty() || b_boxes.is_empty() {
         // Si no hay tracks o detecciones, devolvemos una matriz vacía
-        let iou_sim = Array2::<f32>::zeros((a_boxes.len(), b_boxes.len()));
-        let iou_dist = Array2::<f32>::ones((a_boxes.len(), b_boxes.len()));
+        let iou_sim = Array2::<f64>::zeros((a_boxes.len(), b_boxes.len()));
+        let iou_dist = Array2::<f64>::ones((a_boxes.len(), b_boxes.len()));
         return (iou_sim, iou_dist);
     } else {
         // Calcular HIoU
-        let mut h_iou = Array2::<f32>::zeros((a_boxes.len(), b_boxes.len()));
+        let mut h_iou = Array2::<f64>::zeros((a_boxes.len(), b_boxes.len()));
         for (i, a) in a_boxes.iter().enumerate() {
             for (j, b) in b_boxes.iter().enumerate() {
-                let iw = (a[2].min(b[2]) - a[0].max(b[0]) + 1.0).max(0.0);
-                let ih = (a[3].min(b[3]) - a[1].max(b[1]) + 1.0).max(0.0);
-                let denom = (a[3].max(b[3]) - a[1].min(b[1]) + 1.0).max(0.0);
+                let ih_intersect = (a[3].min(b[3]) - a[1].max(b[1])).max(0.0);
+                let ih_union = (a[3].max(b[3]) - a[1].min(b[1])).max(0.0);
 
-                if ih > 0.0 && denom > 0.0 {
-                    h_iou[[i, j]] = (iw * ih / (ih + 1.0)) / denom;
+                if ih_union > 0.0 {
+                    h_iou[[i, j]] = ih_intersect / ih_union;
                 }
             }
         }
@@ -94,7 +92,7 @@ pub fn iou_distance(a_tracks: &[Track], b_dets: &[Detection]) -> (Array2<f32>, A
         // Calcular HMIoU
         let iou_sim = bbox_overlaps(&a_boxes, &b_boxes);
 
-        let mut iou_dist = Array2::<f32>::zeros((a_boxes.len(), b_boxes.len()));
+        let mut iou_dist = Array2::<f64>::zeros((a_boxes.len(), b_boxes.len()));
         for i in 0..a_boxes.len() {
             for j in 0..b_boxes.len() {
                 iou_dist[[i, j]] = 1.0 - (h_iou[[i, j]] * iou_sim[[i, j]]);
@@ -104,38 +102,38 @@ pub fn iou_distance(a_tracks: &[Track], b_dets: &[Detection]) -> (Array2<f32>, A
     }
 }
 
-pub fn cos_distance(tracks: &[Track], dets: &[Detection]) -> Array2<f32> {
+pub fn cos_distance(tracks: &[Track], dets: &[Detection]) -> Array2<f64> {
     let num_t = tracks.len();
     let num_d = dets.len();
     if num_t == 0 || num_d == 0 {
         return Array2::ones((num_t, num_d));
     }
 
-    let mut cos_dist = Array2::<f32>::zeros((num_t, num_d));
+    let mut cos_dist = Array2::<f64>::zeros((num_t, num_d));
     for i in 0..num_t {
         for j in 0..num_d {
             // Producto punto entre los features del track y la detección
-            let dot: f32 = tracks[i]
+            let dot: f64 = tracks[i]
                 .feat
                 .iter()
                 .zip(dets[j].feat.iter())
                 .map(|(a, b)| a * b)
                 .sum();
 
-            cos_dist[[i, j]] = (1.0_f32 - dot).clamp(0.0_f32, 1.0_f32);
+            cos_dist[[i, j]] = (1.0_f64 - dot).clamp(0.0_f64, 1.0_f64);
         }
     }
     cos_dist
 }
 
-pub fn conf_distance(tracks: &[Track], dets: &[Detection]) -> Array2<f32> {
+pub fn conf_distance(tracks: &[Track], dets: &[Detection]) -> Array2<f64> {
     let num_t = tracks.len();
     let num_d = dets.len();
     if num_t == 0 || num_d == 0 {
         return Array2::ones((num_t, num_d));
     }
 
-    let mut conf_dist = Array2::<f32>::zeros((num_t, num_d));
+    let mut conf_dist = Array2::<f64>::zeros((num_t, num_d));
     for i in 0..num_t {
         let t = &tracks[i];
 
@@ -162,7 +160,7 @@ pub fn conf_distance(tracks: &[Track], dets: &[Detection]) -> Array2<f32> {
 }
 
 // Actualizado para usar HistoryEntry
-fn get_prev_box(history: &HashMap<usize, HistoryEntry>, frame_id: usize, dt: usize) -> [f32; 4] {
+pub fn get_prev_box(history: &HashMap<usize, HistoryEntry>, frame_id: usize, dt: usize) -> [f64; 4] {
     let target_key = frame_id.saturating_sub(dt); // Evita error de underflow en Rust
     if let Some(entry) = history.get(&target_key) {
         return entry.box_x1y1x2y2; // Obtenemos el campo real del struct
@@ -179,18 +177,18 @@ pub fn angle_distance(
     dets: &[Detection],
     frame_id: usize,
     d_t: usize,
-) -> Array2<f32> {
+) -> Array2<f64> {
     let num_t = tracks.len();
     let num_d = dets.len();
     if num_t == 0 || num_d == 0 {
         return Array2::ones((num_t, num_d));
     }
 
-    let mut angle_dist = Array2::<f32>::zeros((num_t, num_d));
+    let mut angle_dist = Array2::<f64>::zeros((num_t, num_d));
 
     for i in 0..num_t {
         let b_1 = get_prev_box(&tracks[i].history, frame_id, d_t);
-        // velocity se asume como [[f32; 2]; 4] (vel en las 4 esquinas)
+        // velocity se asume como [[f64; 2]; 4] (vel en las 4 esquinas)
         let vel_t = tracks[i].velocity;
 
         for j in 0..num_d {
@@ -223,7 +221,7 @@ pub fn angle_distance(
 
                 // Producto punto y ángulo (calc_angle)
                 let dot = vel_t[c][0] * vel_t_d_x + vel_t[c][1] * vel_t_d_y;
-                let angle = dot.clamp(-1.0_f32, 1.0_f32).acos().abs() / std::f32::consts::PI;
+                let angle = dot.clamp(-1.0_f64, 1.0_f64).acos().abs() / std::f64::consts::PI;
                 angle_sum += angle / 4.0;
             }
 
@@ -243,7 +241,7 @@ pub fn angle_distance(
 /// TPA: Track-Pairwise Association -> cada track se asocia con la detección que tiene el costo mínimo,
 /// y cada detección se asocia con el track que tiene el costo mínimo
 /// Solo se acepta la asociación si ambos coinciden mutuamente (match mutuo) y el costo es menor que el umbral
-pub fn associate(cost: &Array2<f32>, match_thr: f32) -> Vec<[usize; 2]> {
+pub fn associate(cost: &Array2<f64>, match_thr: f64) -> Vec<[usize; 2]> {
     let mut matches = Vec::new();
 
     if cost.nrows() > 0 && cost.ncols() > 0 {
@@ -252,7 +250,7 @@ pub fn associate(cost: &Array2<f32>, match_thr: f32) -> Vec<[usize; 2]> {
 
         // argmin(axis=1): Para cada track, buscar la mejor detección
         for (i, row) in cost.rows().into_iter().enumerate() {
-            let mut min_val = f32::MAX;
+            let mut min_val = f64::MAX;
             for (j, &val) in row.into_iter().enumerate() {
                 if val < min_val {
                     min_val = val;
@@ -263,7 +261,7 @@ pub fn associate(cost: &Array2<f32>, match_thr: f32) -> Vec<[usize; 2]> {
 
         // argmin(axis=0): Para cada detección, buscar el mejor track
         for (j, col) in cost.columns().into_iter().enumerate() {
-            let mut min_val = f32::MAX;
+            let mut min_val = f64::MAX;
             for (i, &val) in col.into_iter().enumerate() {
                 if val < min_val {
                     min_val = val;
@@ -294,10 +292,10 @@ pub fn iterative_assignment(
     dets_high: &[Detection],
     dets_low: &[Detection],
     dets_del_high: &[Detection],
-    mut match_thr: f32, // Umbral inicial de coincidencia
-    penalty_p: f32,     // Penalización por baja confianza
-    penalty_q: f32,     // Penalización por detecciones eliminadas
-    reduce_step: f32,   // Cantidad en la que se reduce el umbral en cada iteración
+    mut match_thr: f64, // Umbral inicial de coincidencia
+    penalty_p: f64,     // Penalización por baja confianza
+    penalty_q: f64,     // Penalización por detecciones eliminadas
+    reduce_step: f64,   // Cantidad en la que se reduce el umbral en cada iteración
     frame_id: usize,
     d_t: usize,
 ) -> (Vec<[usize; 2]>, Vec<usize>, Vec<usize>) {
@@ -317,7 +315,7 @@ pub fn iterative_assignment(
 
     let num_t = tracks.len();
     let num_d = dets.len();
-    let mut cost = Array2::<f32>::zeros((num_t, num_d));
+    let mut cost = Array2::<f64>::zeros((num_t, num_d));
 
     // Calculate cost & Give penalties
     for i in 0..num_t {
@@ -331,7 +329,7 @@ pub fn iterative_assignment(
                 + 0.10 * conf_dist[[i, j]]
                 + 0.05 * ang_dist[[i, j]];
 
-            let _cos_dist = cos_distance(tracks, &dets);    // La necesitamos para FastReID
+            // let _cos_dist = cos_distance(tracks, &dets); // La necesitamos para FastReID
 
             // Give penalty según de qué lista proviene la detección
             if j >= dets_high.len() && j < dets_high.len() + dets_low.len() {
@@ -345,7 +343,7 @@ pub fn iterative_assignment(
                 c = 1.0;
             }
 
-            cost[[i, j]] = c.clamp(0.0_f32, 1.0_f32);
+            cost[[i, j]] = c.clamp(0.0_f64, 1.0_f64);
         }
     }
 
@@ -399,11 +397,11 @@ pub fn iterative_assignment(
 /// Equivalente a `track_aware_nms`: Filtra las nuevas detecciones asegurándose
 /// de que no se superponen con los tracks que ya estamos siguiendo (anclas).
 pub fn track_aware_nms(
-    pair_sims: &Array2<f32>, // Matriz de similitud (IoU) entre todas las cajas
-    scores: &[f32],          // Confianzas de las detecciones huérfanas
+    pair_sims: &Array2<f64>, // Matriz de similitud (IoU) entre todas las cajas
+    scores: &[f64],          // Confianzas de las detecciones huérfanas
     num_tracks: usize,       // Cantidad de anclas (Tracks emparejados)
-    nms_thresh: f32,         // Límite de solapamiento permitido
-    score_thresh: f32,       // Límite de confianza para existir
+    nms_thresh: f64,         // Límite de solapamiento permitido
+    score_thresh: f64,       // Límite de confianza para existir
 ) -> Vec<bool> {
     let num_dets = pair_sims.nrows() - num_tracks;
     let mut allow_indices = vec![false; num_dets];
@@ -422,7 +420,7 @@ pub fn track_aware_nms(
 
         // Check 2: ¿Se solapa demasiado con un Track Activo (Ancla)?
         if num_tracks > 0 {
-            let mut max_sim_with_track = 0.0_f32;
+            let mut max_sim_with_track = 0.0_f64;
             for t in 0..num_tracks {
                 let sim = pair_sims[[num_tracks + idx, t]];
                 if sim > max_sim_with_track {
