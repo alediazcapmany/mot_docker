@@ -6,6 +6,7 @@ xhost +local:docker > /dev/null 2>&1
 echo "Abriendo el contenedor de Docker con Ubuntu 22.04 y OpenCV 4.11.0..."
 
 docker run -it --rm \
+    --name mot_container \
     --net=host \
     --env="DISPLAY" \
     --volume="$HOME/.Xauthority:/root/.Xauthority:rw" \
