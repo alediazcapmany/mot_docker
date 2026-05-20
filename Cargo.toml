@@ -8,9 +8,6 @@ edition = "2021"
 opencv = "0.94.4" # Se usa esta versión porque es la que usa yolo_detector, no actualizar hasta que no actualicen yolo_detector
 nalgebra = "0.34.2" 
 ndarray = "0.15.6"
-# trackforge = "0.1.9" # Tracker ByteTack -> examples: hog_bt.rs yolo_bt.rs yolors_bt
-# yolo_detector = "1.0.1" # Detector -> examples: yolors_bt.rs
-# norfair-rs = "0.4.2"    # Tracker -> examples: yolo_norfair.rs
 ort = { git = "https://github.com/pykeio/ort", tag = "v2.0.0-rc.9" }
 
 
